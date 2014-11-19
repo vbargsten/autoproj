@@ -1218,7 +1218,6 @@ where 'mode' is one of:
 
             remaining_arguments = Autoproj::CmdLine.
                 parse_arguments(cmdline_arguments, false)
-            Dir.chdir(Autoproj.root_dir)
 
             Autoproj::CmdLine.update_os_dependencies = false
             Autoproj::CmdLine.initialize
