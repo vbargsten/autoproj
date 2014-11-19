@@ -52,107 +52,15 @@ module Autoproj
         end
 
         def self.install_ruby_shims
-            install_suffix = ""
-            if match = /ruby(.*)$/.match(RbConfig::CONFIG['RUBY_INSTALL_NAME'])
-                install_suffix = match[1]
-            end
-
-            bindir = File.join(Autoproj.build_dir, 'bin')
-            FileUtils.mkdir_p bindir
-            Autoproj.env_add 'PATH', bindir
-
-            File.open(File.join(bindir, 'ruby'), 'w') do |io|
-                io.puts "#! /bin/sh"
-                io.puts "exec #{ruby_executable} \"$@\""
-            end
-            FileUtils.chmod 0755, File.join(bindir, 'ruby')
-
-            ['gem', 'irb', 'testrb'].each do |name|
-                # Look for the corresponding gem program
-                prg_name = "#{name}#{install_suffix}"
-                if File.file?(prg_path = File.join(RbConfig::CONFIG['bindir'], prg_name))
-                    File.open(File.join(bindir, name), 'w') do |io|
-                        io.puts "#! #{ruby_executable}"
-                        io.puts "exec \"#{prg_path}\", *ARGV"
-                    end
-                    FileUtils.chmod 0755, File.join(bindir, name)
-                end
-            end
+            Ops::Setup.install_ruby_shims
         end
 
         def self.validate_current_root
-            # Make sure that the currently loaded env.sh is actually us
-            if ENV['AUTOPROJ_CURRENT_ROOT'] && !ENV['AUTOPROJ_CURRENT_ROOT'].empty? && (ENV['AUTOPROJ_CURRENT_ROOT'] != Autoproj.root_dir)
-                raise ConfigError.new, "the current environment is for #{ENV['AUTOPROJ_CURRENT_ROOT']}, but you are in #{Autoproj.root_dir}, make sure you are loading the right #{ENV_FILENAME} script !"
-            end
+            Ops::Setup.validate_current_root
         end
 
         def self.initialize
-            Encoding.default_internal = Encoding::UTF_8
-            Encoding.default_external = Encoding::UTF_8
-
-            Autobuild::Reporting << Autoproj::Reporter.new
-            if mail_config[:to]
-                Autobuild::Reporting << Autobuild::MailReporter.new(mail_config)
-            end
-
-            validate_current_root
-
-            # Remove from LOADED_FEATURES everything that is coming from our
-            # configuration directory
-            Autobuild::Package.clear
-            Autoproj.loaded_autobuild_files.clear
-            Autoproj.load_config
-
-            config.validate_ruby_executable
-            install_ruby_shims
-
-            config.apply_autobuild_configuration
-            config.apply_autoproj_prefix
-
-            manifest = Manifest.new
-            Autoproj.manifest = manifest
-            Autoproj.prepare_environment
-            Autobuild.prefix  = Autoproj.build_dir
-            Autobuild.srcdir  = Autoproj.root_dir
-            Autobuild.logdir = File.join(Autobuild.prefix, 'log')
-
-            Ops::Tools.load_autoprojrc
-
-            config.each_reused_autoproj_installation do |p|
-                manifest.reuse(p)
-            end
-
-            # We load the local init.rb first so that the manifest loading
-            # process can use options defined there for the autoproj version
-            # control information (for instance)
-            Ops::Tools.load_main_initrb(manifest)
-
-            manifest_path = File.join(Autoproj.config_dir, 'manifest')
-            manifest.load(manifest_path)
-
-            # Initialize the Autoproj.osdeps object by loading the default. The
-            # rest is loaded later
-            manifest.osdeps.load_default
-            manifest.osdeps.silent = !osdeps?
-            manifest.osdeps.filter_uptodate_packages = osdeps_filter_uptodate?
-            if osdeps_forced_mode
-                manifest.osdeps.osdeps_mode = osdeps_forced_mode
-            end
-
-            # Define the option NOW, as update_os_dependencies? needs to know in
-            # what mode we are.
-            #
-            # It might lead to having multiple operating system detections, but
-            # that's the best I can do for now.
-	    Autoproj::OSDependencies.define_osdeps_mode_option
-            manifest.osdeps.osdeps_mode
-
-            # Do that AFTER we have properly setup Autoproj.osdeps as to avoid
-            # unnecessarily redetecting the operating system
-            if update_os_dependencies? || osdeps?
-                Autoproj.change_option('operating_system', Autoproj::OSDependencies.operating_system(:force => true), true)
-            end
+            Autoproj.setup = Ops::Setup.new
         end
 
         def self.load_autoprojrc
@@ -365,16 +273,7 @@ module Autoproj
         end
 
         def self.update_environment
-            Autoproj.manifest.reused_installations.each do |manifest|
-                manifest.each do |pkg|
-                    Autobuild::Package[pkg.name].update_environment
-                end
-            end
-
-            # Make sure that we have the environment of all selected packages
-            manifest.all_selected_packages(false).each do |pkg_name|
-                Autobuild::Package[pkg_name].update_environment
-            end
+            Ops::Tools.update_environment(Autoproj.manifest)
         end
 
         def self.display_configuration(manifest, package_list = nil)
@@ -526,212 +425,15 @@ module Autoproj
         # Returns the set of packages that are actually selected based on what
         # the user gave on the command line
         def self.resolve_user_selection(selected_packages, options = Hash.new)
-            manifest = Autoproj.manifest
-
-            if selected_packages.empty?
-                return manifest.default_packages
-            end
-            selected_packages = selected_packages.to_set
-
-            selected_packages, nonresolved = manifest.
-                expand_package_selection(selected_packages, options)
-
-            # Try to auto-add stuff if nonresolved
-            nonresolved.delete_if do |sel|
-                next if !File.directory?(sel)
-                while sel != '/'
-                    handler, srcdir = Autoproj.package_handler_for(sel)
-                    if handler
-                        Autoproj.message "  auto-adding #{srcdir} using the #{handler.gsub(/_package/, '')} package handler"
-                        srcdir = File.expand_path(srcdir)
-                        relative_to_root = Pathname.new(srcdir).relative_path_from(Pathname.new(Autoproj.root_dir))
-                        pkg = Autoproj.in_package_set(manifest.local_package_set, manifest.file) do
-                            send(handler, relative_to_root.to_s)
-                        end
-                        setup_package_directories(pkg)
-                        selected_packages.select(sel, pkg.name)
-                        break(true)
-                    end
-
-                    sel = File.dirname(sel)
-                end
-            end
-
-            if Autoproj.verbose
-                Autoproj.message "will install #{selected_packages.packages.to_a.sort.join(", ")}"
-            end
-            selected_packages
+            Ops::UserSelection.resolve_user_selection(selected_packages, options)
         end
 
         def self.validate_user_selection(user_selection, resolved_selection)
-            not_matched = user_selection.find_all do |pkg_name|
-                !resolved_selection.has_match_for?(pkg_name)
-            end
-            if !not_matched.empty?
-                raise ConfigError.new, "autoproj: wrong package selection on command line, cannot find a match for #{not_matched.to_a.sort.join(", ")}"
-            end
-        end
-
-        def self.mark_exclusion_along_revdeps(pkg_name, revdeps, chain = [], reason = nil)
-            root = !reason
-            chain.unshift pkg_name
-            if root
-                reason = Autoproj.manifest.exclusion_reason(pkg_name)
-            else
-                if chain.size == 1
-                    Autoproj.manifest.add_exclusion(pkg_name, "its dependency #{reason}")
-                else
-                    Autoproj.manifest.add_exclusion(pkg_name, "#{reason} (dependency chain: #{chain.join(">")})")
-                end
-            end
-
-            return if !revdeps.has_key?(pkg_name)
-            revdeps[pkg_name].each do |dep_name|
-                if !Autoproj.manifest.excluded?(dep_name)
-                    mark_exclusion_along_revdeps(dep_name, revdeps, chain.dup, reason)
-                end
-            end
+            Ops::UserSelection.validate_user_selection(user_selection, resolved_selection)
         end
 
         def self.import_packages(selection)
-            selected_packages = selection.packages.
-                map do |pkg_name|
-                    pkg = Autobuild::Package[pkg_name]
-                    if !pkg
-                        raise ConfigError.new, "selected package #{pkg_name} does not exist"
-                    end
-                    pkg
-                end.to_set
-
-            # The set of all packages that are currently selected by +selection+
-            all_processed_packages = Set.new
-            # The reverse dependencies for the package tree. It is discovered as
-            # we go on with the import
-            #
-            # It only contains strong dependencies. Optional dependencies are
-            # not included, as we will use this only to take into account
-            # package exclusion (and that does not affect optional dependencies)
-            reverse_dependencies = Hash.new { |h, k| h[k] = Set.new }
-
-            package_queue = selected_packages.to_a.sort_by(&:name)
-            while !package_queue.empty?
-                pkg = package_queue.shift
-                # Remove packages that have already been processed
-                next if all_processed_packages.include?(pkg.name)
-                all_processed_packages << pkg.name
-
-                # If the package has no importer, the source directory must
-                # be there
-                if !pkg.importer && !File.directory?(pkg.srcdir)
-                    raise ConfigError.new, "#{pkg.name} has no VCS, but is not checked out in #{pkg.srcdir}"
-                end
-
-                ## COMPLETELY BYPASS RAKE HERE
-                # The reason is that the ordering of import/prepare between
-                # packages is not important BUT the ordering of import vs.
-                # prepare in one package IS important: prepare is the method
-                # that takes into account dependencies.
-                pkg.import(only_local?)
-                Rake::Task["#{pkg.name}-import"].instance_variable_set(:@already_invoked, true)
-                manifest.load_package_manifest(pkg.name)
-
-                # The package setup mechanisms might have added an exclusion
-                # on this package. Handle this.
-                if Autoproj.manifest.excluded?(pkg.name)
-                    mark_exclusion_along_revdeps(pkg.name, reverse_dependencies)
-                    # Run a filter now, to have errors as early as possible
-                    selection.filter_excluded_and_ignored_packages(Autoproj.manifest)
-                    # Delete this package from the current_packages set
-                    next
-                end
-
-                Autoproj.each_post_import_block(pkg) do |block|
-                    block.call(pkg)
-                end
-                pkg.update_environment
-
-                # Verify that its dependencies are there, and add
-                # them to the selected_packages set so that they get
-                # imported as well
-                new_packages = []
-                pkg.dependencies.each do |dep_name|
-                    reverse_dependencies[dep_name] << pkg.name
-                    new_packages << Autobuild::Package[dep_name]
-                end
-                pkg_opt_deps, _ = pkg.partition_optional_dependencies
-                pkg_opt_deps.each do |dep_name|
-                    new_packages << Autobuild::Package[dep_name]
-                end
-
-                new_packages.delete_if do |pkg|
-                    if Autoproj.manifest.excluded?(pkg.name)
-                        mark_exclusion_along_revdeps(pkg.name, reverse_dependencies)
-                        true
-                    elsif Autoproj.manifest.ignored?(pkg.name)
-                        true
-                    end
-                end
-                package_queue.concat(new_packages.sort_by(&:name))
-
-                # Verify that everything is still OK with the new
-                # exclusions/ignores
-                selection.filter_excluded_and_ignored_packages(Autoproj.manifest)
-            end
-
-	    all_enabled_packages = Set.new
-	    package_queue = selection.packages.dup
-	    # Run optional dependency resolution until we have a fixed point
-	    while !package_queue.empty?
-		pkg_name = package_queue.shift
-		next if all_enabled_packages.include?(pkg_name)
-		all_enabled_packages << pkg_name
-
-		pkg = Autobuild::Package[pkg_name]
-		pkg.resolve_optional_dependencies
-
-                pkg.prepare if !pkg.disabled?
-                Rake::Task["#{pkg.name}-prepare"].instance_variable_set(:@already_invoked, true)
-
-		package_queue.concat(pkg.dependencies)
-            end
-
-            if Autoproj.verbose
-                Autoproj.message "autoproj: finished importing packages"
-            end
-
-            if Autoproj::CmdLine.list_newest?
-                fields = []
-                Rake::Task.tasks.each do |task|
-                    if task.kind_of?(Autobuild::SourceTreeTask)
-                        task.timestamp
-                        fields << ["#{task.name}:", task.newest_file, task.newest_time.to_s]
-                    end
-                end
-
-                field_sizes = fields.inject([0, 0, 0]) do |sizes, line|
-                    3.times do |i|
-                        sizes[i] = [sizes[i], line[i].length].max
-                    end
-                    sizes
-                end
-                format = "  %-#{field_sizes[0]}s %-#{field_sizes[1]}s at %-#{field_sizes[2]}s"
-                fields.each do |line|
-                    Autoproj.message(format % line)
-                end
-            end
-
-            selection.exclusions.each do |sel, pkg_names|
-                pkg_names.sort.each do |pkg_name|
-                    Autoproj.warn "#{pkg_name}, which was selected for #{sel}, cannot be built: #{Autoproj.manifest.exclusion_reason(pkg_name)}", :bold
-                end
-            end
-            selection.ignores.each do |sel, pkg_names|
-                pkg_names.sort.each do |pkg_name|
-                    Autoproj.warn "#{pkg_name}, which was selected for #{sel}, is ignored", :bold
-                end
-            end
-
-            return all_enabled_packages
+            Ops::PackageImport.import_packages(Autoproj.manifest, selection, only_local: only_local?)
         end
 
         def self.build_packages(selected_packages, all_enabled_packages, phases = [])
@@ -1014,24 +716,7 @@ where 'mode' is one of:
                     puts opts
                     exit
                 end
-                opts.on("--mail-from EMAIL", String, "From: field of the sent mails") do |from_email|
-                    mail_config[:from] = from_email
-                end
-                opts.on("--mail-to EMAILS", String, "comma-separated list of emails to which the reports should be sent") do |emails| 
-                    mail_config[:to] ||= []
-                    mail_config[:to] += emails.split(',')
-                end
-                opts.on("--mail-subject SUBJECT", String, "Subject: field of the sent mails") do |subject_email|
-                    mail_config[:subject] = subject_email
-                end
-                opts.on("--mail-smtp HOSTNAME", String, " address of the mail server written as hostname[:port]") do |smtp|
-                    raise "invalid SMTP specification #{smtp}" unless smtp =~ /^([^:]+)(?::(\d+))?$/
-                        mail_config[:smtp] = $1
-                    mail_config[:port] = Integer($2) if $2 && !$2.empty?
-                end
-                opts.on("--mail-only-errors", "send mail only on errors") do
-                    mail_config[:only_errors] = true
-                end
+                mail_config = Ops::Tools.mail_options(opts)
                 Ops::Tools.common_options(opts)
                 opts.instance_eval(&additional_options) if block_given?
             end
@@ -1551,20 +1236,6 @@ where 'mode' is one of:
             remaining_arguments
         end
 
-        def self.initialize_root_directory
-            Autoproj.root_dir
-        rescue Autoproj::UserError => error
-            if ENV['AUTOPROJ_CURRENT_ROOT']
-                Dir.chdir(ENV['AUTOPROJ_CURRENT_ROOT'])
-                begin Autoproj.root_dir
-                rescue Autoproj::UserError
-                    raise error
-                end
-            else
-                raise
-            end
-        end
-
         def self.list_unused(all_enabled_packages)
             all_enabled_packages = all_enabled_packages.map do |pkg_name|
                 Autobuild::Package[pkg_name]
@@ -1616,31 +1287,8 @@ where 'mode' is one of:
             end
         end
 
-        def self.report
-            Autobuild::Reporting.report do
-                yield
-            end
-            Autobuild::Reporting.success
-
-        rescue ConfigError => e
-            STDERR.puts
-            STDERR.puts Autoproj.color(e.message, :red, :bold)
-            if Autoproj.in_autoproj_installation?(Dir.pwd)
-                root_dir = /#{Regexp.quote(Autoproj.root_dir)}(?!\/\.gems)/
-                e.backtrace.find_all { |path| path =~ root_dir }.
-                    each do |path|
-                        STDERR.puts Autoproj.color("  in #{path}", :red, :bold)
-                    end
-            end
-            if Autobuild.debug then raise
-            else exit 1
-            end
-        rescue Interrupt
-            STDERR.puts
-            STDERR.puts Autoproj.color("Interrupted by user", :red, :bold)
-            if Autobuild.debug then raise
-            else exit 1
-            end
+        def self.report(&block)
+            Ops::Tools.report(&block)
         end
     end
 end

@@ -87,6 +87,134 @@ module Autoproj
             end
         end
 
+        def mail_options(opts)
+            mail_config = Hash.new
+            opts.on("--mail-from EMAIL", String, "From: field of the sent mails") do |from_email|
+                mail_config[:from] = from_email
+            end
+            opts.on("--mail-to EMAILS", String, "comma-separated list of emails to which the reports should be sent") do |emails| 
+                mail_config[:to] ||= []
+                mail_config[:to] += emails.split(',')
+            end
+            opts.on("--mail-subject SUBJECT", String, "Subject: field of the sent mails") do |subject_email|
+                mail_config[:subject] = subject_email
+            end
+            opts.on("--mail-smtp HOSTNAME", String, " address of the mail server written as hostname[:port]") do |smtp|
+                raise "invalid SMTP specification #{smtp}" unless smtp =~ /^([^:]+)(?::(\d+))?$/
+                mail_config[:smtp] = $1
+                mail_config[:port] = Integer($2) if $2 && !$2.empty?
+            end
+            opts.on("--mail-only-errors", "send mail only on errors") do
+                mail_config[:only_errors] = true
+            end
+            mail_config
+        end
+
+        def common_acting_commands_options(opts)
+            common_options(opts)
+        end
+
+        def build_update_options(opts)
+            common_acting_commands_options(opts)
+        end
+
+        def display_newest_files
+            fields = []
+            Rake::Task.tasks.each do |task|
+                if task.kind_of?(Autobuild::SourceTreeTask)
+                    task.timestamp
+                    fields << ["#{task.name}:", task.newest_file, task.newest_time.to_s]
+                end
+            end
+
+            field_sizes = fields.inject([0, 0, 0]) do |sizes, line|
+                3.times do |i|
+                    sizes[i] = [sizes[i], line[i].length].max
+                end
+                sizes
+            end
+            format = "  %-#{field_sizes[0]}s %-#{field_sizes[1]}s at %-#{field_sizes[2]}s"
+            fields.each do |line|
+                Autoproj.message(format % line)
+            end
+        end
+
+        def report
+            Autobuild::Reporting.report do
+                yield
+            end
+            Autobuild::Reporting.success
+
+        rescue ConfigError => e
+            STDERR.puts
+            STDERR.puts Autoproj.color(e.message, :red, :bold)
+            if Autoproj.in_autoproj_installation?(Dir.pwd)
+                root_dir = /#{Regexp.quote(Autoproj.root_dir)}(?!\/\.gems)/
+                e.backtrace.find_all { |path| path =~ root_dir }.
+                    each do |path|
+                        STDERR.puts Autoproj.color("  in #{path}", :red, :bold)
+                    end
+            end
+            if Autobuild.debug then raise
+            else exit 1
+            end
+        rescue Interrupt
+            STDERR.puts
+            STDERR.puts Autoproj.color("Interrupted by user", :red, :bold)
+            if Autobuild.debug then raise
+            else exit 1
+            end
+        end
+
+        def resolve_paths_in_argv(argv)
+            argv = argv.map do |arg|
+                if File.directory?(arg)
+                    File.expand_path(arg)
+                else arg
+                end
+            end
+
+            needs_update_config = false
+            argv.delete_if do |name|
+                if name =~ /^#{Regexp.quote(Autoproj.config_dir + File::SEPARATOR)}/ ||
+                    name =~ /^#{Regexp.quote(Autoproj.remotes_dir + File::SEPARATOR)}/
+                    needs_update_config = true
+                elsif (Autoproj.config_dir + File::SEPARATOR) =~ /^#{Regexp.quote(name)}/
+                    needs_update_config = true
+                    false
+                end
+            end
+
+            return argv, needs_update_config
+        end
+
+        def update_environment(manifest)
+            manifest.reused_installations.each do |reused_manifest|
+                reused_manifest.each_autobuild_package do |pkg|
+                    pkg.update_environment
+                end
+            end
+
+            # Make sure that we have the environment of all selected packages
+            manifest.all_selected_packages(false).each do |pkg_name|
+                manifest.find_package(pkg_name).autobuild.update_environment
+            end
+        end
+
+        # Run the provided command as user
+        def run_as_user(*args)
+            if !system(*args)
+                raise "failed to run #{args.join(" ")}"
+            end
+        end
+        
+        # Run the provided command as root, using sudo to gain root access
+        def run_as_root(*args)
+            if !system(Autobuild.tool_in_path('sudo'), *args)
+                raise "failed to run #{args.join(" ")} as root"
+            end
+        end
+
         extend Tools
     end
     end

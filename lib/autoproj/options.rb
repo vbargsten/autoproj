@@ -35,20 +35,14 @@ module Autoproj
     def self.has_config_key?(name)
         config.has_value_for?(name)
     end
-
     def self.save_config
-        config.save(File.join(Autoproj.config_dir, "config.yml"))
+        setup.save_config
     end
-
     def self.config
-        @config ||= Configuration.new
+        setup.config
     end
-
     def self.load_config
-        config_file = File.join(Autoproj.config_dir, "config.yml")
-        if File.exists?(config_file)
-            config.load(config_file, reconfigure?)
-        end
+        setup.load_config
     end
 
     class << self

@@ -20,6 +20,7 @@ module Autoproj
             @overrides = Hash.new
             @declared_options = Hash.new
             @displayed_options = Hash.new
+            @shell_helpers = true
         end
 
         # Deletes the current value for an option
@@ -216,6 +217,14 @@ module Autoproj
 
         def randomize_layout=(value)
             set('randomize_layout', value, true)
+        end
+
+        def shell_helpers?
+            @shell_helpers
+        end
+
+        def shell_helpers=(value)
+            @shell_helpers = value
         end
     end
 end

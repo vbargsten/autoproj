@@ -11,62 +11,25 @@ module Autoproj
         end
     end
 
-    # Returns true if +path+ is part of an autoproj installation
     def self.in_autoproj_installation?(path)
-        root_dir(File.expand_path(path))
-        true
-    rescue UserError
-        false
+        setup.in_autoproj_installation?(path)
     end
 
-    # Forcefully sets the root directory
-    #
-    # This is mostly useful during bootstrapping (i.e. when the search would
-    # fail)
     def self.root_dir=(dir)
-        @root_dir = dir
+        setup.root_dir = dir
     end
 
-    # Returns the root directory of the current autoproj installation.
-    #
-    # If the current directory is not in an autoproj installation,
-    # raises UserError.
     def self.root_dir(dir = Dir.pwd)
-        if @root_dir
-            return @root_dir
+        if setup.root_dir
+            return setup.root_dir
         end
-
-        root_dir_rx =
-            if Autobuild.windows? then /^[a-zA-Z]:\\\\$/
-            else /^\/$/
-            end
-
-        while root_dir_rx !~ dir && !File.directory?(File.join(dir, "autoproj"))
-            dir = File.dirname(dir)
-        end
-        if root_dir_rx =~ dir
-            raise UserError, "not in a Autoproj installation"
-        end
-
-        #Preventing backslashed in path, that might be confusing on some path compares
-        if Autobuild.windows?
-            dir = dir.gsub(/\\/,'/')
-        end
-        dir
+        Ops::Setup.find_root_dir(dir)
     end
 
-    # Returns the configuration directory for this autoproj installation.
-    #
-    # If the current directory is not in an autoproj installation,
-    # raises UserError.
     def self.config_dir
-        File.join(root_dir, "autoproj")
+        setup.config_dir
     end
 
-    # @deprecated use Autobuild.find_in_path instead
-    #
-    # Warning: the autobuild method returns nil (instead of raising) if the
-    # argument cannot be found
     def self.find_in_path(name)
         if path = Autobuild.find_in_path(name)
             return path
@@ -74,59 +37,33 @@ module Autoproj
         end
     end
 
-    class << self
-        # The directory in which packages will be installed.
-        #
-        # If it is a relative path, it is relative to the root dir of the
-        # installation.
-        #
-        # The default is "install"
-        attr_reader :prefix
-
-        # Change the value of 'prefix'
-        def prefix=(new_path)
-            @prefix = new_path
-            Autoproj.change_option('prefix', new_path, true)
-        end
+    def self.prefix
+        setup.prefix_dir
     end
-    @prefix = "install"
 
-    # Returns the build directory (prefix) for this autoproj installation.
-    #
-    # If the current directory is not in an autoproj installation, raises
-    # UserError.
+    def self.prefix=(new_path)
+        setup.prefix_dir
+    end
+
     def self.build_dir
-        File.expand_path(Autoproj.prefix, root_dir)
+        setup.build_dir
     end
 
-    # Returns the path to the provided configuration file.
-    #
-    # If the current directory is not in an autoproj installation, raises
-    # UserError.
     def self.config_file(file)
-        File.join(config_dir, file)
+        setup.config_file(file)
     end
 
-    # Run the provided command as user
     def self.run_as_user(*args)
-        if !system(*args)
-            raise "failed to run #{args.join(" ")}"
-        end
+        setup.run_as_user(*args)
     end
 
-    # Run the provided command as root, using sudo to gain root access
     def self.run_as_root(*args)
-        if !system(Autobuild.tool_in_path('sudo'), *args)
-            raise "failed to run #{args.join(" ")} as root"
-        end
+        setup.run_as_root(*args)
     end
 
-    # Return the directory in which remote package set definition should be
-    # checked out
     def self.remotes_dir
-        File.join(root_dir, ".remotes")
+        setup.remotes_dir
     end
-
 
     def self.env_inherit(*names)
         Autobuild.env_inherit(*names)
@@ -137,32 +74,28 @@ module Autoproj
         isolate_environment
     end
 
-    # Initializes the environment variables to a "sane default"
-    #
-    # Use this in autoproj/init.rb to make sure that the environment will not
-    # get polluted during the build.
     def self.isolate_environment
-        Autobuild.env_inherit = false
-        Autobuild.env_push_path 'PATH', "/usr/local/bin", "/usr/bin", "/bin"
+        setup.isolate_environment
     end
 
     def self.prepare_environment
-        # Set up some important autobuild parameters
-        env_inherit 'PATH', 'PKG_CONFIG_PATH', 'RUBYLIB', \
-            'LD_LIBRARY_PATH', 'CMAKE_PREFIX_PATH', 'PYTHONPATH'
-        
-        env_set 'AUTOPROJ_CURRENT_ROOT', Autoproj.root_dir
-        env_set 'RUBYOPT', "-rubygems"
-        Autoproj::OSDependencies::PACKAGE_HANDLERS.each do |pkg_mng|
-            pkg_mng.initialize_environment
-        end
+        setup.prepare_environment
     end
 
-    class << self
-        attr_writer :shell_helpers
-        def shell_helpers?; !!@shell_helpers end
+    def self.shell_helpers=(value)
+        config.shell_helpers = value
     end
-    @shell_helpers = true
+    def self.shell_helpers?
+        config.shell_helpers?
+    end
+
+    def self.load(package_set, *path)
+        setup.load(package_set, *path)
+    end
+
+    def self.load_if_present(package_set, *path)
+        setup.load_if_present(package_set, *path)
+    end
 
     # Create the env.sh script in +subdir+. In general, +subdir+ should be nil.
     def self.export_env_sh(subdir = nil)
@@ -193,18 +126,6 @@ module Autoproj
             end
             Autobuild.export_env_sh(io)
         end
-    end
-
-    # @deprecated use Ops.loader.load or add a proper Loader object to your
-    #   class
-    def self.load(package_set, *path)
-        Ops.loader.load(package_set, *path)
-    end
-
-    # @deprecated use Ops.loader.load_if_present or add a proper Loader object
-    #   to your class
-    def self.load_if_present(package_set, *path)
-        Ops.loader.load_if_present(package_set, *path)
     end
 
     # Look into +dir+, searching for shared libraries. For each library, display
