@@ -511,7 +511,6 @@ module Autoproj
         def self.list_unused?; @mode == "list-unused" end
 
         def self.show_statistics?; !!@show_statistics end
-        def self.ignore_dependencies?; @ignore_dependencies end
 
         def self.color?; @color end
         def self.color=(flag); @color = flag end
@@ -657,9 +656,6 @@ where 'mode' is one of:
                 end
                 opts.on("--list-newest", "for each source directory, list what is the newest file used by autoproj for dependency tracking") do
                     Autoproj::CmdLine.list_newest = true
-                end
-                opts.on('-n', '--no-deps', 'completely ignore dependencies') do |value|
-                    @ignore_dependencies = true
                 end
                 opts.on("--no-osdeps", "in build and update modes, disable osdeps handling") do |value|
                     @osdeps_forced_mode = 'none'
