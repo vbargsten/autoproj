@@ -1,0 +1,79 @@
+#! /usr/bin/env ruby
+
+require 'autoproj'
+require 'autoproj/autobuild'
+
+Tools = Autoproj::Ops::Tools
+
+root_dir = Tools.initialize_root_directory
+
+update_from = nil
+list_newest = true
+ignore_dependencies = false
+osdeps_forced_mode = nil
+only_local = true
+
+parser = OptionParser.new do |opt|
+    opt.on '--from DIR', "get all updates from the autoproj project
+currently checked out at DIR" do |path|
+        path = File.expand_path(path, root_dir)
+        update_from = Autoproj::InstallationManifest.from_root(path)
+    end
+    opts.on("--list-newest", "for each source directory, list what is the newest file used by autoproj for dependency tracking") do
+        list_newest = true
+    end
+    opts.on('-n', '--no-deps', 'completely ignore dependencies') do |value|
+        ignore_dependencies = true
+    end
+    opts.on("--no-osdeps", "completely disable osdeps handling") do |value|
+        osdeps_forced_mode = 'none'
+    end
+    opts.on("--osdeps=MODE", "force the osdeps mode to MODE") do |value|
+        osdeps_forced_mode = value
+    end
+    opts.on("--local", "only use local information to update for importers that support it") do |value|
+        only_local = value
+    end
+    opts.on('--nice NICE', Integer, 'nice the subprocesses to the given value') do |value|
+        Autobuild.nice = value
+    end
+end
+Ops::Tools.common_options(parser)
+
+user_selection = parser.parse(ARGV)
+user_selection, config_selected = Tools.resolve_paths_in_argv(user_selection)
+
+manifest = Autoproj::CmdLine.initialize
+Tools.report do
+    manifest.osdeps.osdeps_mode = osdeps_forced_mode
+
+    if user_selection.empty?
+        Autoproj::CmdLine.update_myself
+    elsif config_selected
+        Ops::Configuration.new(manifest, Ops.loader).
+            update_configuration(only_local)
+    end
+    Autoproj::CmdLine.load_configuration
+    Autoproj::CmdLine.setup_all_package_directories
+    Autoproj::CmdLine.resolve_user_selection(user_selection)
+    Autoproj::CmdLine.finalize_package_setup
+    resolved_selected_packages =
+        Autoproj::CmdLine.resolve_user_selection(selected_packages)
+    Autoproj::CmdLine.validate_user_selection(selected_packages, resolved_selected_packages)
+
+    import_packages = Ops::ImportPackages.new(manifest)
+    if ignore_dependencies
+        resolved_selection.each do |pkg_name|
+            import_packages.import_single_package(
+                pkg_name,
+                only_local: only_local,
+                update_from: update_from)
+        end
+    else
+        import_packages.import_packages(
+            resolved_selection,
+            only_local: only_local,
+            update_from: update_from)
+    end
+end
+
