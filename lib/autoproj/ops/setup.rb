@@ -107,7 +107,7 @@ module Autoproj
                 config.apply_autobuild_configuration
                 config.apply_autoproj_prefix
 
-                manifest = Manifest.new
+                manifest = Manifest.new(self)
                 Autoproj.prepare_environment
                 Autobuild.prefix  = build_dir
                 Autobuild.srcdir  = root_dir
@@ -192,7 +192,7 @@ module Autoproj
                 end
             end
 
-            def self.validate_current_root
+            def validate_current_root
                 # Make sure that the currently loaded env.sh is actually us
                 if ENV['AUTOPROJ_CURRENT_ROOT'] && !ENV['AUTOPROJ_CURRENT_ROOT'].empty? && (ENV['AUTOPROJ_CURRENT_ROOT'] != root_dir)
                     raise ConfigError.new, "the current environment is for #{ENV['AUTOPROJ_CURRENT_ROOT']}, but you are in #{root_dir}, make sure you are loading the right #{ENV_FILENAME} script !"
@@ -226,6 +226,140 @@ module Autoproj
                 Autoproj::OSDependencies::PACKAGE_HANDLERS.each do |pkg_mng|
                     pkg_mng.initialize_environment
                 end
+            end
+
+            def load_configuration(silent = false)
+                manifest.each_package_set do |pkg_set|
+                    if Gem::Version.new(pkg_set.required_autoproj_version) > Gem::Version.new(Autoproj::VERSION)
+                        raise ConfigError.new(pkg_set.source_file), "the #{pkg_set.name} package set requires autoproj v#{pkg_set.required_autoproj_version} but this is v#{Autoproj::VERSION}"
+                    end
+                end
+
+                # Loads OS package definitions once and for all
+                manifest.load_osdeps_from_package_sets
+
+                # Load the required autobuild definitions
+                if !silent
+                    Autoproj.message("autoproj: loading ...", :bold)
+                    if !Autoproj.reconfigure?
+                        Autoproj.message("run 'autoproj reconfigure' to change configuration options", :bold)
+                        Autoproj.message("and use 'autoproj switch-config' to change the remote source for", :bold)
+                        Autoproj.message("autoproj's main build configuration", :bold)
+                    end
+                end
+                manifest.each_autobuild_file do |source, name|
+                    import_autobuild_file source, name
+                end
+
+                # Now, load the package's importer configurations (from the various
+                # source.yml files)
+                manifest.load_importers
+
+                # Auto-add packages that are
+                #  * present on disk
+                #  * listed in the layout part of the manifest
+                #  * but have no definition
+                explicit = manifest.normalized_layout
+                explicit.each do |pkg_or_set, layout_level|
+                    next if manifest.find_package(pkg_or_set)
+                    next if manifest.has_package_set?(pkg_or_set)
+
+                    # This is not known. Check if we can auto-add it
+                    full_path = File.expand_path(File.join(root_dir, layout_level, pkg_or_set))
+                    next if !File.directory?(full_path)
+
+                    handler, _ = Autoproj.package_handler_for(full_path)
+                    if handler
+                        Autoproj.message "  auto-adding #{pkg_or_set} #{"in #{layout_level} " if layout_level != "/"}using the #{handler.gsub(/_package/, '')} package handler"
+                        in_package_set(manifest.local_package_set, manifest.file) do
+                            send(handler, pkg_or_set)
+                        end
+                    else
+                        Autoproj.warn "cannot auto-add #{pkg_or_set}: unknown package type"
+                    end
+                end
+
+                # We finished loading the configuration files. Not all configuration
+                # is done (since we need to process the package setup blocks), but
+                # save the current state of the configuration anyway.
+                save_config
+            end
+
+            def setup_package_directories(pkg)
+                pkg_name = pkg.name
+
+                layout =
+                    if config.randomize_layout?
+                        Digest::SHA256.hexdigest(pkg_name)[0, 12]
+                    else manifest.whereis(pkg_name)
+                    end
+
+                place =
+                    if target = manifest.moved_packages[pkg_name]
+                        File.join(layout, target)
+                    else
+                        File.join(layout, pkg_name)
+                    end
+
+                pkg = manifest.find_package(pkg_name)
+                pkg.srcdir = File.join(root_dir, place)
+                pkg.prefix = File.join(build_dir, layout)
+                pkg.doc_target_dir = File.join(build_dir, 'doc', pkg_name)
+                pkg.logdir = File.join(pkg.prefix, "log")
+            end
+            
+            def setup_all_package_directories
+                # Override the package directories from our reused installations
+                imported_packages = Set.new
+                manifest.reused_installations.each do |imported_manifest|
+                    imported_manifest.each do |imported_pkg|
+                        imported_packages << imported_pkg.name
+                        if pkg = manifest.find_package(imported_pkg.name)
+                            pkg.autobuild.srcdir = imported_pkg.srcdir
+                            pkg.autobuild.prefix = imported_pkg.prefix
+                        end
+                    end
+                end
+
+                manifest.packages.each_value do |pkg_def|
+                    pkg = pkg_def.autobuild
+                    next if imported_packages.include?(pkg_def.name)
+                    setup_package_directories(pkg)
+                end
+            end
+
+            def finalize_package_setup
+                # Now call the blocks that the user defined in the autobuild files. We do it
+                # now so that the various package directories are properly setup
+                manifest.packages.each_value do |pkg|
+                    pkg.user_blocks.each do |blk|
+                        blk[pkg.autobuild]
+                    end
+                    pkg.setup = true
+                end
+
+                manifest.each_package_set do |source|
+                    load_if_present(source, source.local_dir, "overrides.rb")
+                end
+
+                # Resolve optional dependencies
+                manifest.resolve_optional_dependencies
+
+                # And, finally, disable all ignored packages on the autobuild side
+                manifest.each_ignored_package do |pkg_name|
+                    pkg = manifest.find_package(pkg_name)
+                    if !pkg
+                        Autoproj.warn "ignore line #{pkg_name} does not match anything"
+                    else
+                        pkg.disable
+                    end
+                end
+
+                update_environment(manifest)
+
+                # We now have processed the process setup blocks. All configuration
+                # should be done and we can save the configuration data.
+                save_config
             end
         end
     end

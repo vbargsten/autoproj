@@ -28,6 +28,8 @@ end
 
 module Autobuild
     class Package
+        # The Autoproj::Manifest this package is part of
+        attr_accessor :manifest
         # The Autoproj::PackageManifest object that describes this package
         attr_accessor :description
         # The set of tags for this package. This is an union of the tags
@@ -61,12 +63,12 @@ module Autobuild
             post_install do
                 path = File.join(prefix, 'lib', 'pkgconfig')
                 Dir.glob(File.join(path, "#{name}-*.pc")) do |pcfile|
-                    Autoproj.message "  removing obsolete file #{pcfile}", :bold
+                    message "  %s: removing obsolete file #{pcfile}", :bold
                     FileUtils.rm_f pcfile
                 end
                 pcfile = File.join(path, "orogen-project-#{name}.pc")
                 if File.exists?(pcfile)
-                    Autoproj.message "  removing obsolete file #{pcfile}", :bold
+                    message "  %s: removing obsolete file #{pcfile}", :bold
                     FileUtils.rm_f pcfile
                 end
             end
@@ -78,7 +80,7 @@ module Autobuild
             post_install do
                 path = File.join(prefix, *path)
                 if File.exists?(path)
-                    Autoproj.message "  removing obsolete file #{path}", :bold
+                    message "  %s: removing obsolete file #{path}", :bold
                     FileUtils.rm_f path
                 end
             end
@@ -91,7 +93,7 @@ module Autobuild
         end
 
         def autoproj_name # :nodoc:
-            srcdir.gsub /^#{Regexp.quote(Autoproj.root_dir)}\//, ''
+            srcdir.gsub /^#{Regexp.quote(manifest.root_dir)}\//, ''
         end
 
         alias __depends_on__ depends_on
@@ -107,7 +109,7 @@ module Autobuild
             end
             @os_packages |= pkg_os.to_set
         rescue Autoproj::OSDependencies::MissingOSDep
-            Autoproj.manifest.add_exclusion(self.name, "it depends on #{name}, which is neither the name of a source package, nor an osdep that is available on this operating system")
+            manifest.add_exclusion(self.name, "it depends on #{name}, which is neither the name of a source package, nor an osdep that is available on this operating system")
         end
 
         def depends_on_os_package(name)
@@ -120,7 +122,7 @@ module Autobuild
 
         def partition_package(pkg_name)
             pkg_autobuild, pkg_osdeps = [], []
-            Autoproj.manifest.resolve_package_name(pkg_name).each do |type, dep_name|
+            manifest.resolve_package_name(pkg_name).each do |type, dep_name|
                 if type == :osdeps
                     pkg_osdeps << dep_name
                 elsif type == :package
@@ -134,14 +136,14 @@ module Autobuild
         def partition_optional_dependencies
             packages, osdeps, disabled = [], [], []
             optional_dependencies.each do |name|
-                if !Autoproj.manifest.package_enabled?(name, false)
+                if !manifest.package_enabled?(name, false)
                     disabled << name
                     next
                 end
 
                 pkg_autobuild, pkg_osdeps = partition_package(name)
-                valid = pkg_autobuild.all? { |pkg| Autoproj.manifest.package_enabled?(pkg) } &&
-                    pkg_osdeps.all? { |pkg| Autoproj.manifest.package_enabled?(pkg) }
+                valid = pkg_autobuild.all? { |pkg| manifest.package_enabled?(pkg) } &&
+                    pkg_osdeps.all? { |pkg| manifest.package_enabled?(pkg) }
 
                 if valid
                     packages.concat(pkg_autobuild)
@@ -194,7 +196,7 @@ module Autobuild
         def pick_from_autoproj_root(package, installation_manifest)
             # Get the cachefile w.r.t. the autoproj root
             cachefile = Pathname.new(self.cachefile).
-                relative_path_from(Pathname.new(Autoproj.root_dir)).to_s
+                relative_path_from(Pathname.new(manifest.root_dir)).to_s
 
             # The cachefile in the other autoproj installation
             other_cachefile = File.join(installation_manifest.path, cachefile)
@@ -342,12 +344,12 @@ end
 def package_common(package_type, spec, &block)
     package_name = Autoproj.package_name_from_options(spec)
 
-    if Autobuild::Package[package_name]
+    if pkg = Autoproj.manifest.find_package(package_name)
         current_file = Autoproj.current_file[1]
         old_file     = Autoproj.manifest.definition_file(package_name)
         Autoproj.warn "#{package_name} from #{current_file} is overridden by the definition in #{old_file}"
 
-        return Autobuild::Package[package_name]
+        return pkg.autobuild
     end
 
     pkg = Autoproj.define(package_type, spec, &block)
@@ -525,9 +527,9 @@ def not_on(*architectures)
 
     # Simply get the current list of packages, yield the block, and exclude all
     # packages that have been added
-    current_packages = Autobuild::Package.each(true).map(&:last).map(&:name).to_set
+    current_packages = Autoproj.manifest.all_package_names.to_set
     yield
-    new_packages = Autobuild::Package.each(true).map(&:last).map(&:name).to_set -
+    new_packages = Autoproj.manifest.all_package_names.to_set -
         current_packages
 
     new_packages.each do |pkg_name|
@@ -548,14 +550,14 @@ end
 #
 # See Autoproj.configuration_option
 def configuration_option(*opts, &block)
-    Autoproj.configuration_option(*opts, &block)
+    Autoproj.config.declare(*opts, &block)
 end
 
 # Retrieves the configuration value for the given option
 #
 # See Autoproj.user_config
 def user_config(key)
-    Autoproj.user_config(key)
+    Autoproj.config.get(key)
 end
 
 class Autobuild::Git
@@ -578,7 +580,7 @@ class Autobuild::ArchiveImporter
 end
 
 def package(name)
-    Autobuild::Package[name]
+    Autoproj.manifest.find_autobuild_package(name)
 end
 
 # Returns true if +name+ is a valid package and is neither excluded nor ignored
@@ -607,8 +609,7 @@ end
 #
 # Calling this function will make sure that the given metapackage is now empty.
 def clear_metapackage(name)
-    meta = Autoproj.manifest.metapackage(name)
-    meta.packages.clear
+    Autoproj.manifest.clear_metapackage(name)
 end
 
 # Declares a new metapackage, or adds packages to an existing one

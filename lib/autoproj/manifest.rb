@@ -76,6 +76,9 @@ module Autoproj
         # The manifest data as a Hash
         attr_reader :data
 
+        # The object handling loading and global configuration
+        attr_reader :setup
+
         # The set of packages defined so far as a mapping from package name to 
         # [Autobuild::Package, package_set, file] tuple
         attr_reader :packages
@@ -111,8 +114,9 @@ module Autoproj
         # The definition of all OS packages available on this installation
         attr_reader :osdeps
 
-	def initialize
+	def initialize(setup)
             @file = nil
+            @setup = setup
 	    @data = Hash.new
             @packages = Hash.new
             @package_manifests = Hash.new
@@ -135,6 +139,10 @@ module Autoproj
             end
 	end
 
+        # The root of the autoproj workspace this manifest represents
+        def root_dir
+            setup.root_dir
+        end
 
         # Call this method to ignore a specific package. It must not be used in
         # init.rb, as the manifest is not yet loaded then
@@ -375,6 +383,12 @@ module Autoproj
             packages[name]
         end
 
+        def find_autobuild_package(name)
+            if pkg = find_package(name)
+                pkg.autobuild
+            end
+        end
+
         def package(name)
             packages[name]
         end
@@ -545,7 +559,7 @@ module Autoproj
                 next if result.include?(pkg_name)
                 result << pkg_name
 
-                pkg = Autobuild::Package[pkg_name]
+                pkg = find_autobuild_package(pkg_name)
                 pkg.dependencies.each do |dep_name|
                     queue << dep_name
                 end
@@ -563,7 +577,7 @@ module Autoproj
 
             explicit_selection  = explicitly_selected_package?(name)
 	    osdeps_availability = osdeps.availability_of(name)
-            available_as_source = Autobuild::Package[name]
+            available_as_source = find_autobuild_package(name)
 
             osdeps_overrides = Autoproj.manifest.osdeps_overrides[name]
             if osdeps_overrides
@@ -642,7 +656,7 @@ module Autoproj
         # the first case, we return all packages defined by that source. In the
         # latter case, we return the singleton array [name]
         def resolve_package_set(name)
-            if Autobuild::Package[name]
+            if find_autobuild_package(name)
                 [name]
             else
                 pkg_set = find_metapackage(name)
@@ -675,7 +689,7 @@ module Autoproj
             packages.each do |pkg_name|
                 package_names = resolve_package_set(pkg_name)
                 package_names.each do |pkg_name|
-                    meta.add(Autobuild::Package[pkg_name])
+                    meta.add(find_autobuild_package(pkg_name))
                 end
             end
 
@@ -683,6 +697,13 @@ module Autoproj
                 meta.instance_eval(&block)
             end
             meta
+        end
+
+        # Removes all packages from the given metapackage
+        #
+        # @param [String] name the metapackage name
+        def clear_metapackage(name)
+            metapackage(name).packages.clear
         end
 
         # Lists all defined metapackages
@@ -741,7 +762,7 @@ module Autoproj
 
         # Returns all defined package names, minus the excluded and ignored ones
         def all_package_names
-            Autobuild::Package.each.map { |name, _| name }.to_set
+            packages.keys
         end
 
         # Returns all the packages that can be built in this installation
@@ -762,7 +783,7 @@ module Autoproj
         # If it is false, the method will simply return false on non-defined
         # packages 
         def package_enabled?(name, validate = true)
-            if !Autobuild::Package[name] && !osdeps.has?(name)
+            if !find_package(name) && !osdeps.has?(name)
                 if validate
                     raise ArgumentError, "package #{name} does not exist"
                 end
@@ -791,7 +812,7 @@ module Autoproj
             result = Set.new
             root = default_packages(validate).packages.to_set
             root.each do |pkg_name|
-                Autobuild::Package[pkg_name].all_dependencies(result)
+                find_package(pkg_name).autobuild.all_dependencies(result)
             end
             result | root
         end
@@ -874,6 +895,7 @@ module Autoproj
                     PackageManifest.load(package, manifest_path)
                 end
 
+            pkg.autobuild.manifest = self
             pkg.autobuild.description = manifest
             package_manifests[package.name] = manifest
 
@@ -918,7 +940,7 @@ module Autoproj
             required_os_packages = Set.new
             package_os_deps = Hash.new { |h, k| h[k] = Array.new }
             packages.each do |pkg_name|
-                pkg = Autobuild::Package[pkg_name]
+                pkg = find_autobuild_package(pkg_name)
                 if !pkg
                     raise InternalError, "internal error: #{pkg_name} is not a package"
                 end
@@ -1052,7 +1074,7 @@ module Autoproj
             selection.each do |sel|
                 match_pkg_name = Regexp.new(Regexp.quote(sel))
                 matching_packages = all_packages.map do |pkg_name|
-                    pkg = Autobuild::Package[pkg_name]
+                    pkg = find_autobuild_package(pkg_name)
                     if pkg_name =~ match_pkg_name ||
                         "#{sel}/" =~ Regexp.new("^#{Regexp.quote(pkg.srcdir)}/") ||
                         pkg.srcdir =~ Regexp.new("^#{Regexp.quote(sel)}")
@@ -1131,7 +1153,7 @@ module Autoproj
         end
 
         def reuse(*dir)
-            dir = File.expand_path(File.join(*dir), Autoproj.root_dir)
+            dir = File.expand_path(File.join(*dir), setup.root_dir)
             if reused_installations.any? { |mnf| mnf.path == dir }
                 return
             end

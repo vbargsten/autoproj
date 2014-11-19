@@ -47,6 +47,10 @@ module Autoproj
             Autoproj.config
         end
 
+        def self.setup
+            Autoproj.setup
+        end
+
         def self.ruby_executable
             Autoproj.config.ruby_executable
         end
@@ -56,7 +60,7 @@ module Autoproj
         end
 
         def self.validate_current_root
-            Ops::Setup.validate_current_root
+            setup.validate_current_root
         end
 
         def self.initialize
@@ -110,62 +114,7 @@ module Autoproj
         end
 
         def self.load_configuration(silent = false)
-            manifest = Autoproj.manifest
-
-            manifest.each_package_set do |pkg_set|
-                if Gem::Version.new(pkg_set.required_autoproj_version) > Gem::Version.new(Autoproj::VERSION)
-                    raise ConfigError.new(pkg_set.source_file), "the #{pkg_set.name} package set requires autoproj v#{pkg_set.required_autoproj_version} but this is v#{Autoproj::VERSION}"
-                end
-            end
-
-            # Loads OS package definitions once and for all
-            Autoproj.load_osdeps_from_package_sets
-
-            # Load the required autobuild definitions
-            if !silent
-                Autoproj.message("autoproj: loading ...", :bold)
-                if !Autoproj.reconfigure?
-                    Autoproj.message("run 'autoproj reconfigure' to change configuration options", :bold)
-                    Autoproj.message("and use 'autoproj switch-config' to change the remote source for", :bold)
-                    Autoproj.message("autoproj's main build configuration", :bold)
-                end
-            end
-            manifest.each_autobuild_file do |source, name|
-                Autoproj.import_autobuild_file source, name
-            end
-
-            # Now, load the package's importer configurations (from the various
-            # source.yml files)
-            manifest.load_importers
-
-            # Auto-add packages that are
-            #  * present on disk
-            #  * listed in the layout part of the manifest
-            #  * but have no definition
-            explicit = manifest.normalized_layout
-            explicit.each do |pkg_or_set, layout_level|
-                next if Autobuild::Package[pkg_or_set]
-                next if manifest.has_package_set?(pkg_or_set)
-
-                # This is not known. Check if we can auto-add it
-                full_path = File.expand_path(File.join(Autoproj.root_dir, layout_level, pkg_or_set))
-                next if !File.directory?(full_path)
-
-                handler, srcdir = Autoproj.package_handler_for(full_path)
-                if handler
-                    Autoproj.message "  auto-adding #{pkg_or_set} #{"in #{layout_level} " if layout_level != "/"}using the #{handler.gsub(/_package/, '')} package handler"
-                    Autoproj.in_package_set(manifest.local_package_set, manifest.file) do
-                        send(handler, pkg_or_set)
-                    end
-                else
-                    Autoproj.warn "cannot auto-add #{pkg_or_set}: unknown package type"
-                end
-            end
-
-            # We finished loading the configuration files. Not all configuration
-            # is done (since we need to process the package setup blocks), but
-            # save the current state of the configuration anyway.
-            Autoproj.save_config
+            setup.load_configuration(silent)
         end
 
         def self.update_configuration
@@ -173,83 +122,16 @@ module Autoproj
         end
 
         def self.setup_package_directories(pkg)
-            pkg_name = pkg.name
-
-            layout =
-                if config.randomize_layout?
-                    Digest::SHA256.hexdigest(pkg_name)[0, 12]
-                else manifest.whereis(pkg_name)
-                end
-
-            place =
-                if target = manifest.moved_packages[pkg_name]
-                    File.join(layout, target)
-                else
-                    File.join(layout, pkg_name)
-                end
-
-            pkg = Autobuild::Package[pkg_name]
-            pkg.srcdir = File.join(Autoproj.root_dir, place)
-            pkg.prefix = File.join(Autoproj.build_dir, layout)
-            pkg.doc_target_dir = File.join(Autoproj.build_dir, 'doc', pkg_name)
-            pkg.logdir = File.join(pkg.prefix, "log")
+            setup.setup_package_directories(pkg)
         end
 
 
         def self.setup_all_package_directories
-            manifest = Autoproj.manifest
-
-            # Override the package directories from our reused installations
-            imported_packages = Set.new
-            Autoproj.manifest.reused_installations.each do |imported_manifest|
-                imported_manifest.each do |imported_pkg|
-                    imported_packages << imported_pkg.name
-                    if pkg = manifest.find_package(imported_pkg.name)
-                        pkg.autobuild.srcdir = imported_pkg.srcdir
-                        pkg.autobuild.prefix = imported_pkg.prefix
-                    end
-                end
-            end
-
-            manifest.packages.each_value do |pkg_def|
-                pkg = pkg_def.autobuild
-                next if imported_packages.include?(pkg_def.name)
-                setup_package_directories(pkg)
-            end
+            setup.setup_all_package_directories
         end
 
         def self.finalize_package_setup
-            # Now call the blocks that the user defined in the autobuild files. We do it
-            # now so that the various package directories are properly setup
-            manifest.packages.each_value do |pkg|
-                pkg.user_blocks.each do |blk|
-                    blk[pkg.autobuild]
-                end
-                pkg.setup = true
-            end
-
-            manifest.each_package_set do |source|
-                Autoproj.load_if_present(source, source.local_dir, "overrides.rb")
-            end
-
-            # Resolve optional dependencies
-            manifest.resolve_optional_dependencies
-
-            # And, finally, disable all ignored packages on the autobuild side
-            manifest.each_ignored_package do |pkg_name|
-                pkg = Autobuild::Package[pkg_name]
-                if !pkg
-                    Autoproj.warn "ignore line #{pkg_name} does not match anything"
-                else
-                    pkg.disable
-                end
-            end
-
-            update_environment
-
-            # We now have processed the process setup blocks. All configuration
-            # should be done and we can save the configuration data.
-            Autoproj.save_config
+            setup.finalize_package_setup
         end
 
         # This is a bit of a killer. It loads all available package manifests,
@@ -1241,7 +1123,7 @@ where 'mode' is one of:
             leaf_dirs << Autoproj.gem_home
             leaf_dirs << Autoproj.remotes_dir
 
-            root = Autoproj.root_dir
+            root = Autoproj.setup.root_dir
             all_dirs = leaf_dirs.dup
             leaf_dirs.each do |dir|
                 dir = File.dirname(dir)
@@ -1251,10 +1133,10 @@ where 'mode' is one of:
                     dir = File.dirname(dir)
                 end
             end
-            all_dirs << Autoproj.root_dir
+            all_dirs << Autoproj.setup.root_dir
 
             unused = Set.new
-            Find.find(Autoproj.root_dir) do |path|
+            Find.find(Autoproj.setup.root_dir) do |path|
                 next if !File.directory?(path)
                 if !all_dirs.include?(path)
                     unused << path
@@ -1265,7 +1147,7 @@ where 'mode' is one of:
             end
 
 
-            root = Pathname.new(Autoproj.root_dir)
+            root = Pathname.new(Autoproj.setup.root_dir)
             Autoproj.message
             Autoproj.message "The following directories are not part of a package used in the current autoproj installation", :bold
             unused.to_a.sort.each do |dir|
@@ -1274,7 +1156,7 @@ where 'mode' is one of:
         end
 
         def self.export_installation_manifest
-            File.open(File.join(Autoproj.root_dir, ".autoproj-installation-manifest"), 'w') do |io|
+            File.open(File.join(Autoproj.setup.root_dir, ".autoproj-installation-manifest"), 'w') do |io|
                 Autoproj.manifest.all_selected_packages.each do |pkg_name|
                     pkg = Autobuild::Package[pkg_name]
                     io.puts "#{pkg_name},#{pkg.srcdir},#{pkg.prefix}"
