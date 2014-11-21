@@ -23,7 +23,7 @@ require 'autoproj/query'
 require 'autoproj/ops/tools'
 require 'autoproj/ops/loader'
 require 'autoproj/ops/configuration'
-require 'autoproj/ops/import_packages'
+require 'autoproj/ops/package_import'
 require 'autoproj/ops/setup'
 require 'autoproj/ops/user_selection'
 

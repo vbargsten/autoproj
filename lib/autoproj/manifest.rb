@@ -114,8 +114,11 @@ module Autoproj
         # The definition of all OS packages available on this installation
         attr_reader :osdeps
 
-	def initialize(setup)
+	def initialize(setup, vcs = nil)
             @file = nil
+            @vcs = vcs ||
+                VCSDefinition.from_raw(type: 'local', url: setup.config_dir)
+
             @setup = setup
 	    @data = Hash.new
             @packages = Hash.new
@@ -134,9 +137,6 @@ module Autoproj
             @ignored_packages = Set.new
 
             @constant_definitions = Hash.new
-            if Autoproj.has_config_key?('manifest_source')
-                @vcs = VCSDefinition.from_raw(Autoproj.user_config('manifest_source'))
-            end
 	end
 
         # The root of the autoproj workspace this manifest represents
@@ -340,6 +340,7 @@ module Autoproj
         # Register a new package
         def register_package(package, block, source, file)
             pkg = PackageDefinition.new(package, source, file)
+            package.manifest = self
             if block
                 pkg.add_setup_block(block)
             end
@@ -1170,11 +1171,10 @@ module Autoproj
         end
 
         # Load OS dependency information contained in our registered package
-        # sets into the provided osdep object
+        # sets into {osdeps}
         #
-        # @param [OSDependencies] osdeps the osdep handling object
         # @return [void]
-        def load_osdeps_from_package_sets(osdeps)
+        def load_osdeps_from_package_sets
             each_osdeps_file do |source, file|
                 osdeps.merge(source.load_osdeps(file))
             end
@@ -1186,7 +1186,9 @@ module Autoproj
         # configuration
         #
         # @return [Manifest]
-        attr_accessor :manifest
+        def manifest
+            setup.manifest
+        end
 
         # The known osdeps definitions
         #
@@ -1207,7 +1209,7 @@ module Autoproj
 
     # Load the osdeps files contained in {manifest} into {osdeps}
     def self.load_osdeps_from_package_sets
-        manifest.load_osdeps_from_package_sets(osdeps)
+        manifest.load_osdeps_from_package_sets
         osdeps
     end
 

@@ -42,6 +42,17 @@ module Autoproj
         Autobuild.warn(message, *style)
     end
 
+    def self.setup=(setup)
+        @setup = setup
+    end
+
+    def self.setup
+        if !@setup
+            raise ArgumentError, "trying to access the workspace setup object, but there is currently none. You probably wanted to call Autoproj::CmdLine.initialize first"
+        end
+        @setup
+    end
+
     module CmdLine
         def self.config
             Autoproj.config
@@ -63,8 +74,11 @@ module Autoproj
             setup.validate_current_root
         end
 
+
         def self.initialize
-            Autoproj.setup = Ops::Setup.new
+            setup = create_setup
+            initialize_osdeps(setup)
+            setup.manifest
         end
 
         def self.load_autoprojrc
@@ -72,45 +86,7 @@ module Autoproj
         end
 
         def self.update_myself(options = Hash.new)
-            options = Kernel.validate_options options,
-                force: false, restart_on_update: true
-            return if !options[:force] && !Autoproj::CmdLine.update_os_dependencies?
-
-            Autoproj.config.validate_ruby_executable
-
-            # This is a guard to avoid infinite recursion in case the user is
-            # running autoproj osdeps --force
-            if ENV['AUTOPROJ_RESTARTING'] == '1'
-                return
-            end
-
-            did_update =
-                begin
-                    saved_flag = PackageManagers::GemManager.with_prerelease
-                    PackageManagers::GemManager.with_prerelease = Autoproj.config.use_prerelease?
-                    OSDependencies.load_default.install(%w{autobuild autoproj})
-                ensure
-                    PackageManagers::GemManager.with_prerelease = saved_flag
-                end
-
-            # First things first, see if we need to update ourselves
-            if did_update && options[:restart_on_update]
-                puts
-                Autoproj.message 'autoproj and/or autobuild has been updated, restarting autoproj'
-                puts
-
-                # We updated autobuild or autoproj themselves ... Restart !
-                #
-                # ...But first save the configuration (!)
-                Autoproj.save_config
-                ENV['AUTOPROJ_RESTARTING'] = '1'
-                require 'rbconfig'
-                if defined?(ORIGINAL_ARGV)
-                    exec(ruby_executable, $0, *ORIGINAL_ARGV)
-                else
-                    exec(ruby_executable, $0, *ARGV)
-                end
-            end
+            Ops.update_myself(options)
         end
 
         def self.load_configuration(silent = false)
@@ -374,7 +350,7 @@ module Autoproj
             end
 
             # Now look for what the user wants
-            Autoproj.osdeps.osdeps_mode != 'none' || !Autoproj.osdeps.silent?
+            !Autoproj.osdeps.osdeps_mode.empty? || !Autoproj.osdeps.silent?
         end
         class << self
             attr_accessor :update_os_dependencies

@@ -2,7 +2,7 @@
 require 'optparse'
 require 'autoproj'
 
-build_all = (Dir.pwd == Autoproj.root_dir)
+build_all = (Dir.pwd == Autoproj::Ops::Setup.find_current_workspace_dir)
 parser = OptionParser.new do |opt|
     opt.banner = "aup [options] [dir_or_package]
 Runs autoproj update for the given directory or package name.
@@ -43,10 +43,9 @@ end
 if remaining.grep(/^-/).size == remaining.size && !build_all
     remaining.push '.'
 end
-remaining.unshift 'update'
 
 ORIGINAL_ARGV = ARGV.dup # This is used in case autoproj needs to update itself
 ARGV.clear
 ARGV.concat(remaining)
-load File.expand_path('autoproj', File.dirname(__FILE__))
+load File.expand_path('autoproj-update', File.dirname(__FILE__))
 

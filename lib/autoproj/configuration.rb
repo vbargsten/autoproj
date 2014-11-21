@@ -204,13 +204,6 @@ module Autoproj
             end
         end
 
-        def apply_autoproj_prefix
-            if has_value_for?('prefix')
-                Autoproj.prefix = get('prefix')
-            else Autoproj.prefix = 'install'
-            end
-        end
-
         def randomize_layout?
             get('randomize_layout', false)
         end
@@ -225,6 +218,12 @@ module Autoproj
 
         def shell_helpers=(value)
             @shell_helpers = value
+        end
+        def reconfigure=(flag)
+            @reconfigure = flag
+        end
+        def reconfigure?
+            @reconfigure
         end
     end
 end

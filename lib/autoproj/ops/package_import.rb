@@ -5,8 +5,42 @@ module Autoproj
             # @return [Manifest] the manifest object we're working with
             attr_reader :manifest
 
-            def initialize(manifest)
+            # The autoproj install we should update from (if any)
+            #
+            # @return [nil,InstallationManifest]
+            attr_reader :update_from
+
+            # If false, repositories will be checked out if not present but not
+            # updated if they are already present
+            #
+            # @return [Boolean]
+            def only_checkout?; !!@only_checkout end
+
+            # If false, repositories will be checked out if not present but not
+            # updated if they are already present
+            #
+            # @return [Boolean]
+            def only_local?; !!@only_local end
+
+            # @param [Setup] setup
+            # @option options [InstallationManifest] :update_from
+            #   (CmdLine.update_from) another autoproj installation from which we
+            #   should update (instead of the normal VCS)
+            # @option options [Boolean] :only_checkout
+            #   (false) if true, configuration repositories will be checked out, but
+            #   not updated if they are already present
+            # @option options [Boolean] :only_local
+            #   (false) if true, will only update using locally-present information.
+            #   This is used mainly for distributed VCS systems.
+            def initialize(manifest, options = Hash.new)
                 @manifest = manifest
+
+                options = Kernel.validate_options options,
+                    only_checkout: false,
+                    only_local: false,
+                    update_from: CmdLine.update_from
+                @only_checkout, @only_local, @update_from = options.
+                    values_at(:only_checkout, :only_local, :update_from)
             end
 
             def mark_exclusion_along_revdeps(pkg_name, revdeps, chain = [], reason = nil)
@@ -30,17 +64,23 @@ module Autoproj
                 end
             end
             
-            def import_single_package(selection, options = Hash.new)
-                options = Kernel.validate_options options,
-                    only_local: false
-                only_local = options[:only_local]
-
+            def import_single_package(pkg)
                 if pkg.respond_to?(:to_str)
-                    pkg = Autobuild::Package[pkg]
+                    pkg = manifest.find_autobuild_package(pkg)
                     if !pkg
                         raise ArgumentError, "package #{pkg} does not exist"
                     end
                     pkg
+                end
+
+                if update_from
+                    if pkg.importer.respond_to?(:pick_from_autoproj_root)
+                        if !pkg.importer.pick_from_autoproj_root(pkg, update_from)
+                            pkg.update = false
+                        end
+                    else
+                        pkg.update = false
+                    end
                 end
 
                 # If the package has no importer, the source directory must
@@ -54,7 +94,8 @@ module Autoproj
                 # packages is not important BUT the ordering of import vs.
                 # prepare in one package IS important: prepare is the method
                 # that takes into account dependencies.
-                pkg.import(only_local)
+                pkg.update = !only_checkout?
+                pkg.import(only_local?)
                 Rake::Task["#{pkg.name}-import"].
                     instance_variable_set(:@already_invoked, true)
                 manifest.load_package_manifest(pkg.name)
@@ -71,14 +112,14 @@ module Autoproj
                 pkg.update_environment
             end
 
-            def self.import_single_package(manifest, *args, &block)
-                new(manifest).import_single_package(*args, &block)
+            def self.import_single_package(manifest, pkg, options = Hash.new)
+                new(manifest, options).import_single_package(pkg)
             end
 
             # Import and load the packages selected in the given selection
             #
             # @param [PackageSelection] selection
-            def import_packages(selection, options = Hash.new)
+            def import_packages(selection)
                 selected_packages = selection.packages.
                     map do |pkg_name|
                         pkg = Autobuild::Package[pkg_name]
@@ -106,7 +147,7 @@ module Autoproj
                     next if all_processed_packages.include?(pkg.name)
                     all_processed_packages << pkg.name
 
-                    import_single_package(pkg, options)
+                    import_single_package(pkg)
 
                     if manifest.excluded?(pkg.name)
                         mark_exclusion_along_revdeps(pkg.name, reverse_dependencies)

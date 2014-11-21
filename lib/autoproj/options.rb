@@ -45,9 +45,11 @@ module Autoproj
         setup.load_config
     end
 
-    class << self
-        attr_accessor :reconfigure
+    def self.reconfigure=(flag)
+        config.reconfigure = flag
     end
-    def self.reconfigure?; @reconfigure end
+    def self.reconfigure?
+        config.reconfigure?
+    end
 end
 

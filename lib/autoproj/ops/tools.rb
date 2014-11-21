@@ -57,11 +57,6 @@ module Autoproj
             end
         end
 
-        def load_main_initrb(manifest = Autoproj.manifest)
-            local_source = LocalPackageSet.new(manifest)
-            Autoproj.load_if_present(local_source, local_source.local_dir, "init.rb")
-        end
-
         def common_options(parser)
             parser.on '--verbose' do
                 Autoproj.verbose  = true
@@ -148,7 +143,7 @@ module Autoproj
         rescue ConfigError => e
             STDERR.puts
             STDERR.puts Autoproj.color(e.message, :red, :bold)
-            if Autoproj.in_autoproj_installation?(Dir.pwd)
+            if Ops::Setup.in_autoproj_installation?(Dir.pwd)
                 root_dir = /#{Regexp.quote(Autoproj.root_dir)}(?!\/\.gems)/
                 e.backtrace.find_all { |path| path =~ root_dir }.
                     each do |path|

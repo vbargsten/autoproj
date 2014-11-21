@@ -19,7 +19,6 @@ module Autoproj
     # The values can contain configuration parameters using the
     # $CONF_VARIABLE_NAME syntax.
     def self.env_add(name, *value)
-        value = value.map { |v| expand_environment(v) }
         Autobuild.env_add(name, *value)
     end
 
@@ -55,7 +54,6 @@ module Autoproj
     #     Autoproj.env_add_path 'RUBYLIB', File.join(pkg.srcdir, 'bindings', 'ruby')
     #   end
     def self.env_add_path(name, *value)
-        value = value.map { |v| expand_environment(v) }
         Autobuild.env_add_path(name, *value)
     end
 

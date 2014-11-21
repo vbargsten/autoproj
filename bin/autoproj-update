@@ -2,78 +2,70 @@
 
 require 'autoproj'
 require 'autoproj/autobuild'
+require 'autoproj/cli/base'
 
-Tools = Autoproj::Ops::Tools
+Ops = Autoproj::Ops
+Tools = Ops::Tools
 
-root_dir = Tools.initialize_root_directory
+cli = Autoproj::CLI::Base.new
 
 update_from = nil
-list_newest = true
 ignore_dependencies = false
-osdeps_forced_mode = nil
-only_local = true
+with_osdeps = true
+only_local = false
+only_checkout = false
 
 parser = OptionParser.new do |opt|
-    opt.on '--from DIR', "get all updates from the autoproj project
-currently checked out at DIR" do |path|
-        path = File.expand_path(path, root_dir)
+    opt.on '--from DIR', "get all updates from the autoproj project currently checked out at DIR" do |path|
+        path = File.expand_path(path, cli.root_dir)
         update_from = Autoproj::InstallationManifest.from_root(path)
     end
-    opts.on("--list-newest", "for each source directory, list what is the newest file used by autoproj for dependency tracking") do
-        list_newest = true
-    end
-    opts.on('-n', '--no-deps', 'completely ignore dependencies') do |value|
+    opt.on('-n', '--no-deps', 'update only the packages listed on the command line and not their dependencies') do |value|
         ignore_dependencies = true
     end
-    opts.on("--no-osdeps", "completely disable osdeps handling") do |value|
-        osdeps_forced_mode = 'none'
+    opt.on('-c', '--checkout', 'only checkout packages that are not there, do not update') do |value|
+        only_checkout = value
     end
-    opts.on("--osdeps=MODE", "force the osdeps mode to MODE") do |value|
-        osdeps_forced_mode = value
+    opt.on('-k', '--keep-going', 'do not stop on error') do
+        Autobuild.ignore_errors = true
     end
-    opts.on("--local", "only use local information to update for importers that support it") do |value|
+    opt.on("--[no-]osdeps", "disable osdeps handling") do |value|
+        with_osdeps = value
+    end
+    opt.on("--local", "only use local information to update for importers that support it") do |value|
         only_local = value
     end
-    opts.on('--nice NICE', Integer, 'nice the subprocesses to the given value') do |value|
+    opt.on('--nice NICE', Integer, 'nice the subprocesses to the given value') do |value|
         Autobuild.nice = value
     end
 end
-Ops::Tools.common_options(parser)
+Tools.common_options(parser)
 
 user_selection = parser.parse(ARGV)
-user_selection, config_selected = Tools.resolve_paths_in_argv(user_selection)
 
-manifest = Autoproj::CmdLine.initialize
 Tools.report do
-    manifest.osdeps.osdeps_mode = osdeps_forced_mode
-
-    if user_selection.empty?
-        Autoproj::CmdLine.update_myself
-    elsif config_selected
-        Ops::Configuration.new(manifest, Ops.loader).
-            update_configuration(only_local)
+    if !with_osdeps
+        cli.osdeps.osdeps_mode = []
     end
-    Autoproj::CmdLine.load_configuration
-    Autoproj::CmdLine.setup_all_package_directories
-    Autoproj::CmdLine.resolve_user_selection(user_selection)
-    Autoproj::CmdLine.finalize_package_setup
-    resolved_selected_packages =
-        Autoproj::CmdLine.resolve_user_selection(selected_packages)
-    Autoproj::CmdLine.validate_user_selection(selected_packages, resolved_selected_packages)
+    _, config_selected = Tools.resolve_paths_in_argv(user_selection)
+    cli.initialize_and_load(
+        user_selection,
+        update_myself: with_osdeps && user_selection.empty?,
+        only_checkout: only_checkout || (!user_selection.empty? && !config_selected),
+        only_local: only_local,
+        update_from: update_from)
 
-    import_packages = Ops::ImportPackages.new(manifest)
+    import_packages = Ops::PackageImport.new(
+        cli.manifest,
+        only_checkout: only_checkout,
+        only_local: only_local,
+        update_from: update_from)
     if ignore_dependencies
-        resolved_selection.each do |pkg_name|
-            import_packages.import_single_package(
-                pkg_name,
-                only_local: only_local,
-                update_from: update_from)
+        cli.resolved_selection.each do |pkg_name|
+            import_packages.import_single_package(pkg_name)
         end
     else
-        import_packages.import_packages(
-            resolved_selection,
-            only_local: only_local,
-            update_from: update_from)
+        import_packages.import_packages(cli.resolved_selection)
     end
 end
 

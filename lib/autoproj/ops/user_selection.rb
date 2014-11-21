@@ -21,7 +21,7 @@ module Autoproj
                             Autoproj.message "  auto-adding #{srcdir} using the #{handler.gsub(/_package/, '')} package handler"
                             srcdir = File.expand_path(srcdir)
                             relative_to_root = Pathname.new(srcdir).relative_path_from(Pathname.new(Autoproj.root_dir))
-                            pkg = Autoproj.in_package_set(manifest.local_package_set, manifest.file) do
+                            pkg = Autoproj.setup.in_package_set(manifest.local_package_set, manifest.file) do
                                 send(handler, relative_to_root.to_s)
                             end
                             setup_package_directories(pkg)

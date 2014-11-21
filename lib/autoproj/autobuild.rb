@@ -238,40 +238,10 @@ module Autoproj
         end
     end
 
-    # @deprecated use Ops.loader.in_package_set or add a proper Loader object to your
-    #   class
-    def self.in_package_set(package_set, path, &block)
-        Ops.loader.in_package_set(package_set, path, &block)
-    end
-
-    # @deprecated use Ops.loader.current_file or add a proper Loader object to your
-    #   class
-    def self.current_file
-        Ops.loader.current_file
-    end
-
-    # @deprecated use Ops.loader.current_package_set or add a proper Loader object to your
-    #   class
-    def self.current_package_set
-        Ops.loader.current_package_set
-    end
-
     def self.define(package_type, spec, &block)
         package = Autobuild.send(package_type, spec)
-        Autoproj.manifest.register_package(package, block, *current_file)
+        manifest.register_package(package, block, *setup.current_file)
         package
-    end
-
-    @loaded_autobuild_files = Set.new
-
-    class << self
-        attr_reader :loaded_autobuild_files
-    end
-
-    def self.import_autobuild_file(package_set, path)
-        return if @loaded_autobuild_files.include?(path)
-        Autoproj.load(package_set, path)
-        @loaded_autobuild_files << path
     end
 
     def self.find_topmost_directory_containing(dir, glob_pattern = nil)
@@ -345,7 +315,7 @@ def package_common(package_type, spec, &block)
     package_name = Autoproj.package_name_from_options(spec)
 
     if pkg = Autoproj.manifest.find_package(package_name)
-        current_file = Autoproj.current_file[1]
+        current_file = setup.current_file[1]
         old_file     = Autoproj.manifest.definition_file(package_name)
         Autoproj.warn "#{package_name} from #{current_file} is overridden by the definition in #{old_file}"
 
@@ -623,7 +593,7 @@ end
 # used. By default, all of the package set's packages are included. After a call
 # to default_packages, only the packages listed (and their dependencies) are.
 def default_packages(*names)
-    pkg_set = Autoproj.current_package_set
+    pkg_set = Autoproj.setup.current_package_set
     clear_metapackage(pkg_set.name)
     metapackage(pkg_set.name, *names)
 end
@@ -635,7 +605,7 @@ end
 # included. After a call to default_packages, only the packages listed (and
 # their dependencies) are.
 def remove_from_default(*names)
-    pkg_set = Autoproj.current_package_set
+    pkg_set = Autoproj.setup.current_package_set
     Autoproj.manifest.metapackage(pkg_set.name).packages.delete_if do |pkg|
         names.include?(pkg.name)
     end

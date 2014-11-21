@@ -6,13 +6,14 @@ module Autoproj
 
         def initialize
             @file_stack = Array.new
+            @loaded_autobuild_files = Set.new
         end
 
         def in_package_set(pkg_set, path)
-            @file_stack.push([pkg_set, File.expand_path(path).gsub(/^#{Regexp.quote(Autoproj.root_dir)}\//, '')])
+            file_stack.push([pkg_set, File.expand_path(path).gsub(/^#{Regexp.quote(Autoproj.root_dir)}\//, '')])
             yield
         ensure
-            @file_stack.pop
+            file_stack.pop
         end
 
         def filter_load_exception(error, package_set, path)
@@ -39,7 +40,7 @@ module Autoproj
         # PackageSet instance and +path+ is the path of the file w.r.t. the autoproj
         # root directory
         def current_file
-            if file = @file_stack.last
+            if file = file_stack.last
                 file
             else raise ArgumentError, "not in a #in_package_set context"
             end
@@ -49,6 +50,16 @@ module Autoproj
         # loaded
         def current_package_set
             current_file.first
+        end
+
+        # @return [Set<String>] the set of autobuild files loaded so far
+        attr_reader :loaded_autobuild_files
+
+        # Imports one autobuild file if it is not already imported
+        def import_autobuild_file(package_set, path)
+            return if loaded_autobuild_files.include?(path)
+            self.load(package_set, path)
+            loaded_autobuild_files << path
         end
 
         # Load a definition file from a package set
@@ -83,14 +94,6 @@ module Autoproj
                 load(pkg_set, *path)
             end
         end
-    end
-
-    # Singleton object that maintains the loading state
-    #
-    # Note that it is here hopefully temporarily. All the Ops classes should
-    # have their loader object given at construction time
-    def self.loader
-        @loader ||= Loader.new
     end
     end
 end

@@ -5,6 +5,10 @@ module Autoproj
 
             attr_reader :manifest
 
+            def osdeps
+                manifest.osdeps
+            end
+
             attr_reader :config
 
             attr_reader :loader
@@ -44,7 +48,7 @@ module Autoproj
             # Change the value of {prefix_dir}
             def prefix_dir=(new_path)
                 @prefix_dir = new_path
-                options.set('prefix', new_path, true)
+                config.set('prefix', new_path, true)
             end
 
             # Returns true if +path+ is part of an autoproj installation
@@ -71,47 +75,61 @@ module Autoproj
                 dir
             end
 
+            def self.find_current_workspace_dir
+                root_dir = find_root_dir
+                if !root_dir
+                    if ENV['AUTOPROJ_CURRENT_ROOT']
+                        root_dir = find_root_dir(ENV['AUTOPROJ_CURRENT_ROOT'])
+                    end
+                end
+                root_dir
+            end
+
+            def ruby_executable
+                config.get('ruby_executable')
+            end
+
             def initialize(root_dir = Dir.pwd)
+                super()
+
                 Encoding.default_internal = Encoding::UTF_8
                 Encoding.default_external = Encoding::UTF_8
 
+                @config = Autoproj::Configuration.new
                 @loader = Loader.new
                 @prefix_dir = 'install'
 
-                @root_dir = find_root_dir(root_dir)
+                @root_dir = self.class.find_current_workspace_dir
                 if !root_dir
-                    if ENV['AUTOPROJ_CURRENT_ROOT']
-                        @root_dir = find_root_dir(ENV['AUTOPROJ_CURRENT_ROOT'])
-                    end
-                    if !root_dir
-                        raise UserError, "not in an autoproj installation"
-                    end
+                    raise UserError, "not in an autoproj installation"
                 end
-
-                Autobuild::Reporting << Autoproj::Reporter.new
-                if mail_config[:to]
-                    Autobuild::Reporting << Autobuild::MailReporter.new(mail_config)
-                end
-
                 validate_current_root
+
+                load_config
+                config.validate_ruby_executable
+
+                if config.has_value_for?('manifest_source')
+                    manifest_vcs = VCSDefinition.from_raw(config.get('manifest_source'))
+                end
+                @manifest = Manifest.new(self, manifest_vcs)
+            end
+
+            def base_setup(root_dir = Dir.pwd)
+                Autobuild::Reporting << Autoproj::Reporter.new
 
                 # Remove from LOADED_FEATURES everything that is coming from our
                 # configuration directory
                 Autobuild::Package.clear
-                @config = Configuration.new
-                load_config
 
-                config.validate_ruby_executable
                 install_ruby_shims
 
                 config.apply_autobuild_configuration
-                config.apply_autoproj_prefix
+                self.prefix_dir = config.get('prefix', 'install')
 
-                manifest = Manifest.new(self)
-                Autoproj.prepare_environment
+                prepare_environment
                 Autobuild.prefix  = build_dir
                 Autobuild.srcdir  = root_dir
-                Autobuild.logdir = File.join(prefix, 'log')
+                Autobuild.logdir = File.join(prefix_dir, 'log')
 
                 load_autoprojrc
 
@@ -119,43 +137,17 @@ module Autoproj
                     manifest.reuse(p)
                 end
 
-                # We load the local init.rb first so that the manifest loading
-                # process can use options defined there for the autoproj version
-                # control information (for instance)
-                load_main_initrb(manifest)
-
-                manifest_path = File.join(config_dir, 'manifest')
-                manifest.load(manifest_path)
-
                 # Initialize the Autoproj.osdeps object by loading the default. The
                 # rest is loaded later
                 manifest.osdeps.load_default
-                manifest.osdeps.silent = !osdeps?
-                manifest.osdeps.filter_uptodate_packages = osdeps_filter_uptodate?
-                if osdeps_forced_mode
-                    manifest.osdeps.osdeps_mode = osdeps_forced_mode
-                end
 
-                # Define the option NOW, as update_os_dependencies? needs to know in
-                # what mode we are.
-                #
-                # It might lead to having multiple operating system detections, but
-                # that's the best I can do for now.
-                Autoproj::OSDependencies.define_osdeps_mode_option
-                manifest.osdeps.osdeps_mode
-
-                # Do that AFTER we have properly setup Autoproj.osdeps as to avoid
-                # unnecessarily redetecting the operating system
-                if update_os_dependencies? || osdeps?
-                    options.set('operating_system', Autoproj::OSDependencies.operating_system(:force => true), true)
-                end
-                manifest
+                load_main_initrb
             end
 
             def load_config
                 config_file = File.join(config_dir, "config.yml")
                 if File.exists?(config_file)
-                    config.load(config_file, reconfigure?)
+                    config.load(config_file, config.reconfigure?)
                 end
             end
 
@@ -163,7 +155,12 @@ module Autoproj
                 config.save(File.join(config_dir, "config.yml"))
             end
 
-            def self.install_ruby_shims
+            def load_main_initrb
+                local_source = LocalPackageSet.new(manifest)
+                load_if_present(local_source, local_source.local_dir, "init.rb")
+            end
+
+            def install_ruby_shims
                 install_suffix = ""
                 if match = /ruby(.*)$/.match(RbConfig::CONFIG['RUBY_INSTALL_NAME'])
                     install_suffix = match[1]
@@ -183,9 +180,11 @@ module Autoproj
                     # Look for the corresponding gem program
                     prg_name = "#{name}#{install_suffix}"
                     if File.file?(prg_path = File.join(RbConfig::CONFIG['bindir'], prg_name))
+                        shim_content = [
+                            "#! #{ruby_executable}",
+                            "exec \"#{prg_path}\", *ARGV"]
                         File.open(File.join(bindir, name), 'w') do |io|
-                            io.puts "#! #{ruby_executable}"
-                            io.puts "exec \"#{prg_path}\", *ARGV"
+                            io.write shim_content.join("\n")
                         end
                         FileUtils.chmod 0755, File.join(bindir, name)
                     end
@@ -218,13 +217,13 @@ module Autoproj
 
             def prepare_environment
                 # Set up some important autobuild parameters
-                env_inherit 'PATH', 'PKG_CONFIG_PATH', 'RUBYLIB', \
+                Autobuild.env_inherit 'PATH', 'PKG_CONFIG_PATH', 'RUBYLIB', \
                     'LD_LIBRARY_PATH', 'CMAKE_PREFIX_PATH', 'PYTHONPATH'
                 
-                env_set 'AUTOPROJ_CURRENT_ROOT', root_dir
-                env_set 'RUBYOPT', "-rubygems"
+                Autobuild.env_set 'AUTOPROJ_CURRENT_ROOT', root_dir
+                Autobuild.env_set 'RUBYOPT', "-rubygems"
                 Autoproj::OSDependencies::PACKAGE_HANDLERS.each do |pkg_mng|
-                    pkg_mng.initialize_environment
+                    pkg_mng.initialize_environment(self)
                 end
             end
 
@@ -247,8 +246,8 @@ module Autoproj
                         Autoproj.message("autoproj's main build configuration", :bold)
                     end
                 end
-                manifest.each_autobuild_file do |source, name|
-                    import_autobuild_file source, name
+                manifest.each_autobuild_file do |pkg_set, name|
+                    import_autobuild_file pkg_set, name
                 end
 
                 # Now, load the package's importer configurations (from the various
@@ -301,7 +300,7 @@ module Autoproj
                         File.join(layout, pkg_name)
                     end
 
-                pkg = manifest.find_package(pkg_name)
+                pkg = manifest.find_autobuild_package(pkg_name)
                 pkg.srcdir = File.join(root_dir, place)
                 pkg.prefix = File.join(build_dir, layout)
                 pkg.doc_target_dir = File.join(build_dir, 'doc', pkg_name)
@@ -360,6 +359,51 @@ module Autoproj
                 # We now have processed the process setup blocks. All configuration
                 # should be done and we can save the configuration data.
                 save_config
+            end
+
+            # Update autoproj itself
+            #
+            # It will restart the current process if autoproj got updated unless
+            # the AUTOPROJ_RESTARTING environment variable is set to 1
+            #
+            # @option options [Boolean] :restart_on_update (true) restart the
+            #   current process if autoproj got updated
+            def update_myself(options = Hash.new)
+                options = Kernel.validate_options options,
+                    restart_on_update: true
+
+                # This is a guard to avoid infinite recursion in case the user is
+                # running autoproj osdeps --force
+                if ENV['AUTOPROJ_RESTARTING'] == '1'
+                    return
+                end
+
+                did_update =
+                    begin
+                        saved_flag = PackageManagers::GemManager.with_prerelease
+                        PackageManagers::GemManager.with_prerelease = Autoproj.config.use_prerelease?
+                        OSDependencies.load_default.install(%w{autobuild autoproj})
+                    ensure
+                        PackageManagers::GemManager.with_prerelease = saved_flag
+                    end
+
+                # First things first, see if we need to update ourselves
+                if did_update && options[:restart_on_update]
+                    puts
+                    Autoproj.message 'autoproj and/or autobuild has been updated, restarting autoproj'
+                    puts
+
+                    # We updated autobuild or autoproj themselves ... Restart !
+                    #
+                    # ...But first save the configuration (!)
+                    ENV['AUTOPROJ_RESTARTING'] = '1'
+                    require 'rbconfig'
+                    if defined?(ORIGINAL_ARGV)
+                        exec(ruby_executable, $0, *ORIGINAL_ARGV)
+                    else
+                        exec(ruby_executable, $0, *ARGV)
+                    end
+                end
             end
         end
     end

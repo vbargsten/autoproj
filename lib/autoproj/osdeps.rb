@@ -21,6 +21,14 @@ module Autoproj
             attr_writer :silent
             def silent?; !!@silent end
 
+            attr_writer :update
+            def update?
+                if @update.nil?
+                    Autobuild.do_update
+                else @update
+                end
+            end
+
             # Create a package manager registered with various names
             #
             # @param [Array<String>] names the package manager names. It MUST be
@@ -41,7 +49,7 @@ module Autoproj
             # order to have a properly functioning package manager
             #
             # This is e.g. needed for python pip or rubygems
-            def self.initialize_environment
+            def self.initialize_environment(setup)
             end
         end
 
@@ -306,7 +314,7 @@ fi
                         false)
             end
 
-            def filter_uptodate_packages(packages)
+            def filter_uptodate_packages(packages, options = Hash.new)
                 # TODO there might be duplicates in packages which should be fixed
                 # somewhere else
                 packages = packages.uniq
@@ -397,7 +405,7 @@ fi
                       "yum install -y '%s'")
             end
 
-            def filter_uptodate_packages(packages)
+            def filter_uptodate_packages(packages, options = Hash.new)
                 result = `LANG=C rpm -q --queryformat "%{NAME}\n" '#{packages.join("' '")}'`
 
                 installed_packages = []
@@ -500,7 +508,7 @@ fi
                 end
             end
             
-            def filter_uptodate_packages(packages)
+            def filter_uptodate_packages(packages, options = Hash.new)
                 packages.find_all do |package_name|
                     !installed?(package_name)
                 end
@@ -518,19 +526,22 @@ fi
 
             # Filters all paths that come from other autoproj installations out
             # of GEM_PATH
-            def self.initialize_environment
+            def self.initialize_environment(setup)
+                @gem_home = ENV['AUTOPROJ_GEM_HOME'] || File.join(setup.root_dir, ".gems")
                 Autobuild::ORIGINAL_ENV['GEM_PATH'] =
                     (ENV['GEM_PATH'] || "").split(File::PATH_SEPARATOR).find_all do |p|
-                        !Autoproj.in_autoproj_installation?(p)
+                        !Ops::Setup.in_autoproj_installation?(p)
                     end.join(File::PATH_SEPARATOR)
                 Autobuild.env_inherit 'GEM_PATH'
                 Autobuild.env_init_from_env 'GEM_PATH'
 
-                orig_gem_path = Autobuild::ORIGINAL_ENV['GEM_PATH'].split(File::PATH_SEPARATOR)
+                orig_gem_path = Autobuild::ORIGINAL_ENV['GEM_PATH'].
+                    split(File::PATH_SEPARATOR)
                 Autobuild::SYSTEM_ENV['GEM_PATH'] = Gem.default_path
-                Autobuild::ORIGINAL_ENV['GEM_PATH'] = orig_gem_path.join(File::PATH_SEPARATOR)
+                Autobuild::ORIGINAL_ENV['GEM_PATH'] =
+                    orig_gem_path.join(File::PATH_SEPARATOR)
 
-                Autoproj.manifest.each_reused_autoproj_installation do |p|
+                setup.config.each_reused_autoproj_installation do |p|
                     p_gems = File.join(p, '.gems')
                     if File.directory?(p_gems)
                         Autobuild.env_add_path 'GEM_PATH', p_gems
@@ -547,7 +558,7 @@ fi
 
             # Return the directory in which RubyGems package should be installed
             def self.gem_home
-                ENV['AUTOPROJ_GEM_HOME'] || File.join(Autoproj.root_dir, ".gems")
+                @gem_home
             end
             
             # Returns the set of default options that are added to gem
@@ -652,7 +663,10 @@ fi
 
             # Returns the set of RubyGem packages in +packages+ that are not already
             # installed, or that can be upgraded
-            def filter_uptodate_packages(gems)
+            def filter_uptodate_packages(gems, options = Hash.new)
+                options = Kernel.validate_options options,
+                    update: update?
+
                 # Don't install gems that are already there ...
                 gems = gems.dup
                 gems.delete_if do |name, version|
@@ -670,7 +684,7 @@ fi
                             Gem.source_index.find_name(name, version_requirements)
                         end
 
-                    if !installed.empty? && Autobuild.do_update
+                    if !installed.empty? && options[:update]
                         # Look if we can update the package ...
                         dep = Gem::Dependency.new(name, version_requirements)
                         available =
@@ -701,8 +715,7 @@ fi
                                 raise ConfigError.new, "cannot find any gem with the name '#{name}'"
                             end
                         end
-                        needs_update = (available_version > installed_version)
-                        !needs_update
+                        !(available_version > installed_version)
                     else
                         !installed.empty?
                     end
@@ -759,16 +772,17 @@ fi
 
             attr_reader :installed_gems
 
-            def self.initialize_environment
+            def self.initialize_environment(setup)
+                @pip_home = ENV['AUTOPROJ_PYTHONUSERBASE'] ||
+                    File.join(setup.root_dir,".pip")
                 Autoproj.env_set 'PYTHONUSERBASE', pip_home
             end
 
             # Return the directory where python packages are installed to.
             # The actual path is pip_home/lib/pythonx.y/site-packages.
-            def self.pip_home
-                ENV['AUTOPROJ_PYTHONUSERBASE'] || File.join(Autoproj.root_dir,".pip")
+            class << self
+                attr_reader :pip_home
             end
-
 
             def initialize
                 super(['pip'])
@@ -1761,7 +1775,12 @@ So, what do you want ? (all, none or a comma-separated list of: os gem pip)
 
         # Override the osdeps mode
         def osdeps_mode=(value)
-            @osdeps_mode = OSDependencies.osdeps_mode_string_to_value(value)
+            @osdeps_mode =
+                if value.respond_to?(:to_ary)
+                    value
+                else
+                    OSDependencies.osdeps_mode_string_to_value(value)
+                end
         end
 
         # Returns the osdeps mode chosen by the user
@@ -1874,7 +1893,7 @@ So, what do you want ? (all, none or a comma-separated list of: os gem pip)
             _, other_packages =
                 packages.partition { |handler, list| handler == os_package_handler }
             other_packages.each do |handler, list|
-                if handler.respond_to?(:pristine)
+                if handler.enabled? && handler.respond_to?(:pristine)
                     handler.pristine(list)
                 end
             end
@@ -1882,6 +1901,9 @@ So, what do you want ? (all, none or a comma-separated list of: os gem pip)
 
         # Requests the installation of the given set of packages
         def install(packages, options = Hash.new)
+            if Kernel.respond_to?(:filter_options)
+            end
+
             # Remove the set of packages that have already been installed 
             packages = packages.to_set - installed_packages
             return false if packages.empty?
