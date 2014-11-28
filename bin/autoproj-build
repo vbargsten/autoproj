@@ -1,0 +1,84 @@
+#! /usr/bin/env ruby
+
+require 'autoproj'
+require 'autoproj/cli/base'
+require 'autoproj/autobuild'
+
+Ops = Autoproj::Ops
+Tools = Ops::Tools
+
+cli = Autoproj::CLI::Base.new
+
+build_mode = :incremental
+ignore_dependencies = false
+with_osdeps = true
+
+parser = OptionParser.new do |opt|
+    opt.on '--rebuild', 'rebuild packages from scratch instead of simply incrementally' do
+        build_mode = :rebuild
+    end
+    opt.on '--force', 'force starting the package builds at the first stage (usually configure) instead of wherever it stopped' do
+        build_mode = :force
+    end
+    opt.on('-n', '--[no-]deps', 'update only the packages listed on the command line and not their dependencies') do |value|
+        ignore_dependencies = true
+    end
+    opt.on("--[no-]osdeps", "disable osdeps handling") do |value|
+        with_osdeps = false
+    end
+    opt.on('--nice NICE', Integer, 'nice the subprocesses to the given value') do |value|
+        Autobuild.nice = value
+    end
+end
+Tools.common_options(parser)
+
+user_selection = parser.parse(ARGV)
+
+Tools.report do
+    if !with_osdeps
+        cli.osdeps.osdeps_mode = []
+    end
+    cli.initialize_and_load(
+        user_selection,
+        update_myself: false,
+        only_checkout: true)
+
+    enabled_packages = Ops.import_packages(
+        cli.manifest,
+        cli.resolved_selection,
+        only_checkout: true)
+
+    if ignore_dependencies
+        enabled_packages.each do |pkg|
+            if !cli.resolved_selection.include?(pkg)
+                pkg.disable
+            end
+        end
+        enabled_packages = cli.resolved_selection.packages
+    end
+
+    if build_mode == :rebuild && user_selection.empty?
+        opt = BuildOption.new(
+            "", "boolean",
+            {doc: ["this is going to trigger a #{mode_name} of all packages.",
+                   "Is that really what you want ?"]}, nil)
+        if !opt.ask(false)
+            exit
+        end
+    end
+
+    manifest.install_os_dependencies(enabled_packages)
+    ops = Ops::Build.new(manifest)
+    if mode == :incremental
+        ops.build_packages(enabled_packages)
+    elsif mode == :force
+        ops.force_build_packages(enabled_packages)
+    elsif mode == :rebuild
+        if user_selection.empty?
+            manifest.pristine_os_dependencies(enabled_packages)
+        end
+        ops.rebuild_packages(enabled_packages)
+    end
+end
+
+

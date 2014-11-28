@@ -201,10 +201,6 @@ module Autoproj
                 return all_enabled_packages
             end
 
-            def self.import_packages(manifest, *args, &block)
-                new(manifest).import_packages(*args, &block)
-            end
-
             def resolve_package_dependencies(pkg, reverse_dependencies)
                 # Verify that its dependencies are there, and add
                 # them to the selected_packages set so that they get
@@ -229,6 +225,10 @@ module Autoproj
                 end
                 new_packages.sort_by(&:name)
             end
+        end
+
+        def self.import_packages(manifest, selection, options = Hash.new)
+            PackageImport.new(manifest, options).import_packages(selection)
         end
     end
 end
