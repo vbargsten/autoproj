@@ -18,7 +18,7 @@ update_config = nil
 
 parser = OptionParser.new do |opt|
     opt.on '--from DIR', "get all updates from the autoproj project currently checked out at DIR" do |path|
-        path = File.expand_path(path, cli.root_dir)
+        path = File.expand_path(path)
         update_from = Autoproj::InstallationManifest.from_root(path)
     end
     opt.on('--[no-]config', 'also update the build configuration. Default if the configuration directory is given on the command line or if no arguments are given') do |flag|
