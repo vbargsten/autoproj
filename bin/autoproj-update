@@ -5,7 +5,6 @@ require 'autoproj/autobuild'
 require 'autoproj/cli/base'
 
 Ops = Autoproj::Ops
-Tools = Ops::Tools
 
 cli = Autoproj::CLI::Base.new
 
@@ -27,8 +26,8 @@ parser = OptionParser.new do |opt|
     opt.on('-n', '--no-deps', 'update only the packages listed on the command line and not their dependencies') do |value|
         ignore_dependencies = true
     end
-    opt.on('-c', '--checkout', 'only checkout packages that are not there, do not update') do |value|
-        only_checkout = value
+    opt.on('-c', '--checkout', 'only checkout packages that are not there, do not update already present ones') do
+        only_checkout = true
     end
     opt.on('-k', '--keep-going', 'do not stop on error') do
         Autobuild.ignore_errors = true
@@ -36,22 +35,22 @@ parser = OptionParser.new do |opt|
     opt.on("--[no-]osdeps", "disable osdeps handling") do |value|
         with_osdeps = value
     end
-    opt.on("--local", "only use local information to update for importers that support it") do |value|
-        only_local = value
+    opt.on("--local", "only use local information to update for importers that support it") do
+        only_local = true
     end
     opt.on('--nice NICE', Integer, 'nice the subprocesses to the given value') do |value|
         Autobuild.nice = value
     end
 end
-Tools.common_options(parser)
+Ops::Tools.common_options(parser)
 
 user_selection = parser.parse(ARGV)
 
-Tools.report do
+Ops::Tools.report do
     if !with_osdeps
         cli.osdeps.osdeps_mode = []
     end
-    _, config_selected = Tools.resolve_paths_in_argv(user_selection)
+    _, config_selected = Ops::Tools.resolve_paths_in_argv(user_selection)
     if update_config.nil?
         update_config = config_selected
     end
