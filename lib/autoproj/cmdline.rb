@@ -617,32 +617,6 @@ where 'mode' is one of:
                 Autobuild.do_build  = false
                 @update_os_dependencies = false
 
-            when "fast-build"
-                Autobuild.do_update = false
-                Autobuild.do_build  = true
-                @update_os_dependencies = false
-            when "build"
-                Autobuild.do_update = nil
-                Autobuild.do_build  = true
-                @update_os_dependencies = nil
-            when "force-build"
-                Autobuild.do_update = nil
-                Autobuild.do_build  = true
-                @update_os_dependencies = nil
-                Autobuild.do_forced_build = true
-            when "rebuild"
-                Autobuild.do_update = nil
-                Autobuild.do_build  = true
-                @update_os_dependencies = nil
-                Autobuild.do_rebuild = true
-            when "full-build"
-                Autobuild.do_update = true
-                Autobuild.do_build  = true
-                @update_os_dependencies = true
-            when "update"
-                Autobuild.do_update = true
-                Autobuild.do_build  = false
-                @update_os_dependencies = true
             when "check"
                 Autobuild.do_update = false
                 Autobuild.do_build  = false
@@ -662,15 +636,6 @@ where 'mode' is one of:
                 Autobuild.do_build  = false
                 @update_os_dependencies = false
                 @only_status = true
-            when "envsh"
-                Autobuild.do_update = false
-                Autobuild.do_build  = false
-                @update_os_dependencies = false
-            when "update-config"
-                Autobuild.do_update = true
-                Autobuild.do_build  = false
-                @update_os_dependencies = false
-                @only_config = true
             when "list-config"
                 Autobuild.do_update = false
                 Autobuild.do_build  = false
