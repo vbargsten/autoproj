@@ -636,18 +636,6 @@ where 'mode' is one of:
                 Autobuild.do_build  = false
                 @update_os_dependencies = false
                 @only_status = true
-            when "list-config"
-                Autobuild.do_update = false
-                Autobuild.do_build  = false
-                @update_os_dependencies = false
-                @only_config = true
-                @display_configuration = true
-            when "doc"
-                Autobuild.do_update = false
-                Autobuild.do_build  = false
-                @update_os_dependencies = false
-                Autobuild.do_doc    = true
-                Autobuild.only_doc  = true
             when "list-unused"
                 Autobuild.do_update = false
                 Autobuild.do_build  = false

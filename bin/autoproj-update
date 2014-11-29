@@ -14,11 +14,15 @@ ignore_dependencies = false
 with_osdeps = true
 only_local = false
 only_checkout = false
+update_config = nil
 
 parser = OptionParser.new do |opt|
     opt.on '--from DIR', "get all updates from the autoproj project currently checked out at DIR" do |path|
         path = File.expand_path(path, cli.root_dir)
         update_from = Autoproj::InstallationManifest.from_root(path)
+    end
+    opt.on('--[no-]config', 'also update the build configuration. Default if the configuration directory is given on the command line or if no arguments are given') do |flag|
+        update_config = flag
     end
     opt.on('-n', '--no-deps', 'update only the packages listed on the command line and not their dependencies') do |value|
         ignore_dependencies = true
@@ -48,10 +52,13 @@ Tools.report do
         cli.osdeps.osdeps_mode = []
     end
     _, config_selected = Tools.resolve_paths_in_argv(user_selection)
+    if update_config.nil?
+        update_config = config_selected
+    end
     cli.initialize_and_load(
         user_selection,
         update_myself: with_osdeps && user_selection.empty?,
-        only_checkout: only_checkout || (!user_selection.empty? && !config_selected),
+        only_checkout: only_checkout || (!user_selection.empty? && !update_config),
         only_local: only_local,
         update_from: update_from)
 
