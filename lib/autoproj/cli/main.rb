@@ -74,8 +74,41 @@ module Autoproj
                     Ops::Show.run(self, user_selection, options)
                 end
             end
+
+            desc 'status [PACKAGES]', 'display synchronization information between the currently checked out packages and their remote version control system'
+            option 'exit-code', type: :boolean,
+                desc: 'exits with a code that reflects the overall project status'
+            option 'config', type: :boolean,
+                desc: 'display the information about the configuration repositories as well (default if the configuration directory is given on the command line or if no arguments are given)'
+            option "local",
+                desc: "only use local information for importers that support it"
+            def status(*user_selection)
+                require 'autoproj/ops/status'
+                options = handle_common_options(self.options)
+
+                exit_code, options = Kernel.filter_options options,
+                    exit_code: false
+                exit_code = exit_code[:exit_code]
+                report(silent: true) do
+                    result = Ops::Status.run(self, user_selection, options)
+                    if exit_code
+                        code = 0
+                        if result.uncommitted
+                            code |= 1
+                        end
+                        if result.local
+                            code |= 2
+                        end
+                        if result.remote
+                            code |= 4
+                        end
+                        exit(code)
+                    else
+                        exit(0)
+                    end
+                end
+            end
         end
     end
 end
-
 

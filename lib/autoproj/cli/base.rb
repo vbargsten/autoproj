@@ -18,6 +18,10 @@ module Autoproj
 
             attr_reader :resolved_selection
 
+            def config_selected?
+                @config_selected
+            end
+
             def initialize(*args)
                 @setup = Autoproj.setup = Ops::Setup.new
                 setup.base_setup
