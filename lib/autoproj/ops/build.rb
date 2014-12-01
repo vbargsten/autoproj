@@ -86,6 +86,48 @@ module Autoproj
                 Autobuild.do_forced_build = false
                 Autobuild.apply(all_enabled_packages, "autoproj-build", ['build'])
             end
+
+            # CLI handling for autoproj build
+            def self.run(cli, user_selection, options = Hash.new)
+                enabled_packages, options = cli.common_setup(user_selection, options)
+                if !options[:deps]
+                    enabled_packages.each do |pkg_name|
+                        if !cli.resolved_selection.include?(pkg_name)
+                            manifest.find_autobuild_package(pkg_name).disable
+                        end
+                    end
+                    enabled_packages = cli.resolved_selection.packages
+                end
+
+                # Note: --rebuild supersedes --force
+                build_mode =
+                    if options[:rebuild] then :rebuild
+                    elsif options[:force] then :force
+                    else :incremental
+                    end
+
+                if build_mode == :rebuild && user_selection.empty?
+                    opt = BuildOption.new(
+                        "", "boolean",
+                        {doc: ["this is going to trigger a #{mode_name} of all packages.",
+                               "Is that really what you want ?"]}, nil)
+                    if !opt.ask(false)
+                        exit
+                    end
+                end
+
+                ops = Ops::Build.new(manifest)
+                if mode == :incremental
+                    ops.build_packages(enabled_packages)
+                elsif mode == :force
+                    ops.force_build_packages(enabled_packages)
+                elsif mode == :rebuild
+                    if user_selection.empty?
+                        manifest.pristine_os_dependencies(enabled_packages)
+                    end
+                    ops.rebuild_packages(enabled_packages)
+                end
+            end
         end
     end
 end

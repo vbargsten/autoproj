@@ -1038,19 +1038,29 @@ module Autoproj
         #
         # This method converts the first two directories into the third one
         def expand_package_selection(selection, options = Hash.new)
-            options = Kernel.validate_options options, filter: true
+            options = Kernel.validate_options options,
+                filter: true,
+                select_all_matches: false
 
             result = PackageSelection.new
 
             # All the packages that are available on this installation
             all_layout_packages = self.all_selected_packages
+            all_osdeps_packages = osdeps.all_package_names
 
             # First, remove packages that are directly referenced by name or by
             # package set names
             selection.each do |sel|
-                match_pkg_name = Regexp.new(Regexp.quote(sel))
+                match_pkg_name = /\b#{Regexp.quote(sel)}\b/
 
                 packages = all_layout_packages.
+                    find_all { |pkg_name| pkg_name =~ match_pkg_name }.
+                    to_set
+                if !packages.empty?
+                    result.select(sel, packages)
+                end
+
+                packages = all_osdeps_packages.
                     find_all { |pkg_name| pkg_name =~ match_pkg_name }.
                     to_set
                 if !packages.empty?
@@ -1094,7 +1104,10 @@ module Autoproj
                     # them as "possible resolutions" for the user selection,
                     # and add them if -- at the end of the method -- nothing
                     # has been found for this particular selection
-                    if !all_layout_packages.include?(pkg_name) && !exact_match
+                    if !options[:select_all_matches] &&
+                        !all_layout_packages.include?(pkg_name) &&
+                        !direct_selection
+
                         pending_selections[sel] = pkg_name
                         next
                     end

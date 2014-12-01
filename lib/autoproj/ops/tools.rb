@@ -134,54 +134,6 @@ module Autoproj
             end
         end
 
-        def report
-            Autobuild::Reporting.report do
-                yield
-            end
-            Autobuild::Reporting.success
-
-        rescue ConfigError => e
-            STDERR.puts
-            STDERR.puts Autoproj.color(e.message, :red, :bold)
-            if Ops::Setup.in_autoproj_installation?(Dir.pwd)
-                root_dir = /#{Regexp.quote(Autoproj.root_dir)}(?!\/\.gems)/
-                e.backtrace.find_all { |path| path =~ root_dir }.
-                    each do |path|
-                        STDERR.puts Autoproj.color("  in #{path}", :red, :bold)
-                    end
-            end
-            if Autobuild.debug then raise
-            else exit 1
-            end
-        rescue Interrupt
-            STDERR.puts
-            STDERR.puts Autoproj.color("Interrupted by user", :red, :bold)
-            if Autobuild.debug then raise
-            else exit 1
-            end
-        end
-
-        def resolve_paths_in_argv(argv)
-            argv = argv.map do |arg|
-                if File.directory?(arg)
-                    File.expand_path(arg)
-                else arg
-                end
-            end
-
-            needs_update_config = false
-            argv.delete_if do |name|
-                if name =~ /^#{Regexp.quote(Autoproj.config_dir + File::SEPARATOR)}/ ||
-                    name =~ /^#{Regexp.quote(Autoproj.remotes_dir + File::SEPARATOR)}/
-                    needs_update_config = true
-                elsif (Autoproj.config_dir + File::SEPARATOR) =~ /^#{Regexp.quote(name)}/
-                    needs_update_config = true
-                    false
-                end
-            end
-
-            return argv, needs_update_config
-        end
 
         def update_environment(manifest)
             manifest.reused_installations.each do |reused_manifest|

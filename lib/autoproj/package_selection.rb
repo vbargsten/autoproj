@@ -52,7 +52,7 @@ module Autoproj
             end
 
             def include?(pkg_name)
-                selection.has_key?(pkg_name)
+                selection.has_key?(pkg_name.to_str)
             end
 
             def empty?

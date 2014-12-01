@@ -1,6 +1,10 @@
 #! /usr/bin/env ruby
+
+require 'autobuild'
+require 'autoproj/ops/tools'
+require 'autoproj/ops/loader'
+require 'autoproj/ops/setup'
 require 'optparse'
-require 'autoproj'
 
 build_all = (Dir.pwd == Autoproj::Ops::Setup.find_current_workspace_dir)
 parser = OptionParser.new do |opt|
@@ -24,7 +28,7 @@ end
 # Accept options that are invalid in +parser+, to pass them on to autoproj
 # itself
 options = ARGV.dup
-remaining = []
+remaining = ['update']
 while !options.empty?
     begin
         head = options.shift
@@ -35,7 +39,6 @@ while !options.empty?
     end
 end
 
-
 # If --all is not given *and* there is no non-option argument (i.e. no directory
 # / package name), add the current directory to the command line
 #
@@ -44,8 +47,6 @@ if remaining.grep(/^-/).size == remaining.size && !build_all
     remaining.push '.'
 end
 
-ORIGINAL_ARGV = ARGV.dup # This is used in case autoproj needs to update itself
-ARGV.clear
-ARGV.concat(remaining)
-load File.expand_path('autoproj-update', File.dirname(__FILE__))
+require 'autoproj/cli/main'
+Autoproj::CLI::Main.start(remaining)
 

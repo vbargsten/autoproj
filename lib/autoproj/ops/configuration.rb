@@ -11,6 +11,12 @@ module Autoproj
         # @return [nil,InstallationManifest]
         attr_reader :update_from
 
+        # If true, configuration repositories will be checked out if
+        # they are not already present. Otherwise, raise an error
+        #
+        # @return [Boolean]
+        def checkout?; !!@checkout end
+
         # If false, repositories will be checked out if not present but not
         # updated if they are already present
         #
@@ -66,6 +72,9 @@ module Autoproj
         # @option options [InstallationManifest] :update_from
         #   (CmdLine.update_from) another autoproj installation from which we
         #   should update (instead of the normal VCS)
+        # @option options [Boolean] :checkout
+        #   (true) if true, configuration repositories will be checked out if
+        #   they are not already present. Otherwise, raise an error
         # @option options [Boolean] :only_checkout
         #   (false) if true, configuration repositories will be checked out, but
         #   not updated if they are already present
@@ -74,13 +83,14 @@ module Autoproj
         #   This is used mainly for distributed VCS systems.
         def initialize(setup, options = Hash.new)
             options = Kernel.validate_options options,
+                checkout: true,
                 only_checkout: false,
                 only_local: false,
                 update_from: CmdLine.update_from
             @setup = setup
             @remote_update_message_displayed = false
-            @only_checkout, @only_local, @update_from = options.
-                values_at(:only_checkout, :only_local, :update_from)
+            @checkout, @only_checkout, @only_local, @update_from = options.
+                values_at(:checkout, :only_checkout, :only_local, :update_from)
         end
 
         # Imports or updates a source (remote or otherwise).
